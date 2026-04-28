@@ -87,9 +87,9 @@ else:
 
 default_cfg = {
     "url": url,
-    "name": "H2O LLM Studio",
+    "name": "EvaGPT LLM Studio",
     "version": version,
-    "github": "https://github.com/h2oai/h2o-llmstudio",
+    "github": "https://github.com/MTSmash-TMP-Networks/h2o-llmstudio-eva-gpt",
     "min_experiment_disk_space": get_size(
         os.getenv("MIN_DISK_SPACE_FOR_EXPERIMENTS", "2GB")
     ),
