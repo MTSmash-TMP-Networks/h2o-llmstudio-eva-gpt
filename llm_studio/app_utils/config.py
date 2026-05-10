@@ -87,7 +87,7 @@ else:
 
 default_cfg = {
     "url": url,
-    "name": "EvaGPT LLM Studio",
+    "name": "MaTeLiX AI – EvaGPT Studio",
     "version": version,
     "github": "https://github.com/MTSmash-TMP-Networks/h2o-llmstudio-eva-gpt",
     "min_experiment_disk_space": get_size(

@@ -19,14 +19,14 @@ class ThemeColors(TypedDict):
 
 class WaveTheme:
     _theme_colors: ThemeColors = {
-        "primary": "#FEC925",
+        "primary": "#4DB8FF",
         "background_color": "#121212",
     }
 
     states = {
         "zombie": "#E0E0E0",
         "queued": "#B8B8B8",
-        "running": "#FFE52B",
+        "running": "#4DB8FF",
         "finished": "#92E95A",
         "failed": "#DA0000",
         "stopped": "#DA0000",
