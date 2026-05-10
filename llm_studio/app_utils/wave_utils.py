@@ -19,20 +19,20 @@ class ThemeColors(TypedDict):
 
 class WaveTheme:
     _theme_colors: ThemeColors = {
-        "primary": "#4DB8FF",
-        "background_color": "#121212",
+        "primary": "#7C4DFF",
+        "background_color": "#0B1020",
     }
 
     states = {
-        "zombie": "#E0E0E0",
-        "queued": "#B8B8B8",
-        "running": "#4DB8FF",
-        "finished": "#92E95A",
-        "failed": "#DA0000",
-        "stopped": "#DA0000",
+        "zombie": "#94A3B8",
+        "queued": "#64748B",
+        "running": "#7C4DFF",
+        "finished": "#22C55E",
+        "failed": "#EF4444",
+        "stopped": "#F97316",
     }
-    color = "#2196F3"
-    color_range = "#2196F3 #CC7722 #2CA02C #D62728 #9467BD #17BECF #E377C2 #DDAA22"
+    color = "#7C4DFF"
+    color_range = "#7C4DFF #06B6D4 #22C55E #F97316 #EF4444 #EC4899 #14B8A6 #A78BFA"
 
     def __repr__(self) -> str:
         return "WaveTheme"

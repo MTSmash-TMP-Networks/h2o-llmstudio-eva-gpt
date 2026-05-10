@@ -29,7 +29,7 @@ async def meta(q: Q) -> None:
     # TODO remove `stylesheet` when wave makes message bars smaller
     q.page["meta"] = ui.meta_card(
         box="",
-        title="H2O LLM Studio",
+        title="MaTeLiX AI Studio",
         layouts=[
             ui.layout(breakpoint="0px", width="100%", zones=zones),
             ui.layout(breakpoint="1920px", width="1920px", zones=zones),
@@ -72,6 +72,19 @@ async def meta(q: Q) -> None:
             div[data-test="experiment/display/deployment/top_right"]
             div[data-visible="true"]:last-child > div > div > div > div {
                 flex-grow: 1;
+            }
+
+            div[data-test] .ms-Button,
+            div[data-test] .ms-TextField-fieldGroup,
+            div[data-test] .ms-Dropdown-title,
+            div[data-test] .ms-DetailsHeader,
+            div[data-test] .ms-DetailsRow {
+                border-radius: 10px;
+            }
+
+            div[data-test] .ms-Button--primary {
+                background: linear-gradient(120deg, #7C4DFF 0%, #06B6D4 100%);
+                border: none;
             }
             """
         ),

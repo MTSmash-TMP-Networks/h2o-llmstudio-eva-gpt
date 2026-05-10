@@ -33,7 +33,7 @@ class ConfigNLPCausalLMDataset(DefaultConfig):
 
     personalize: bool = False
     chatbot_name: str = "h2oGPT"
-    chatbot_author: str = "H2O.ai"
+    chatbot_author: str = "MaTeLiX AI"
 
     train_dataframe: str = "/path/to/train.csv"
     validation_strategy: str = "automatic"
