@@ -384,7 +384,6 @@ class ConfigNLPCausalLMArchitecture(DefaultConfig):
         self._grid_search_iscustom["intermediate_dropout"] = True
 
         self._visibility["model_class"] = -1
-        self._visibility["pretrained"] = -1
 
 
 @dataclass
