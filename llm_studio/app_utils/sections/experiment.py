@@ -1004,6 +1004,20 @@ async def experiment_stop(q: Q, experiment_ids: list[int]) -> None:
             pass
 
 
+async def experiment_stop_early(q: Q, experiment_ids: list[int]) -> None:
+    """Gracefully stop selected experiments and request checkpoint save."""
+
+    for experiment_id in experiment_ids:
+        experiment = q.client.app_db.get_experiment(experiment_id)
+        try:
+            Path(os.path.join(experiment.path, "stop_training")).touch()
+            flag_path = os.path.join(experiment.path, "flags.json")
+            write_flag(flag_path, "status", "stopping")
+            write_flag(flag_path, "info", "Early stop requested. Saving checkpoint.")
+        except Exception as e:
+            logger.error(f"Error while early stopping the experiment: {e}")
+
+
 def load_charts(experiment_path):
     try:
         with Cache(os.path.join(experiment_path, "charts_cache")) as cache:
@@ -1162,6 +1176,14 @@ async def experiment_display(q: Q) -> None:
                     tooltip=None,
                 ),
             ]
+    elif status == "running":
+        buttons += [
+            ui.button(
+                name="experiment/display/early_stop",
+                label="Early stop (save model)",
+                primary=False,
+            )
+        ]
 
         if adapter_exists:
             buttons += [

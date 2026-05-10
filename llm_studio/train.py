@@ -256,6 +256,18 @@ def run_train(
         logger.info(f"Evaluation step: {evaluation_step}")
 
         for itr, data in enumerate(tr_it):
+            stop_training_path = os.path.join(cfg.output_directory, "stop_training")
+            if os.path.exists(stop_training_path):
+                if cfg.training.save_checkpoint != "disable":
+                    logger.info(
+                        "Early stop requested. Saving last model checkpoint to "
+                        f"{cfg.output_directory}"
+                    )
+                    save_checkpoint(model=model, path=cfg.output_directory, cfg=cfg)
+                os.remove(stop_training_path)
+                cfg.environment._stop_requested = True
+                return 0, 0
+
             cfg.environment._curr_step += (
                 cfg.training.batch_size * cfg.environment._world_size
             )
@@ -637,6 +649,7 @@ def run(cfg: DefaultConfigProblemBase) -> float:
     # reset steps
     cfg.environment._curr_step = 0
     cfg.environment._curr_val_step = 0
+    cfg.environment._stop_requested = False
 
     gc.collect()
 
@@ -690,7 +703,10 @@ def run(cfg: DefaultConfigProblemBase) -> float:
         save_prediction_outputs(cfg.experiment_name, experiment_path)
 
         flag_path = os.path.join(cfg.output_directory, "flags.json")
-        write_flag(flag_path, "status", "finished")
+        if cfg.environment._stop_requested:
+            write_flag(flag_path, "status", "stopped")
+        else:
+            write_flag(flag_path, "status", "finished")
         time_took = time.time() - global_start_time
         if time_took > 86400:
             # if more than one day, show days

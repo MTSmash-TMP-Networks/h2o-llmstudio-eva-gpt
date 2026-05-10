@@ -32,6 +32,7 @@ from llm_studio.app_utils.sections.experiment import (
     experiment_rename_ui_workflow,
     experiment_run,
     experiment_start,
+    experiment_stop_early,
     experiment_stop,
 )
 from llm_studio.app_utils.sections.home import home
@@ -326,6 +327,10 @@ async def handle(q: Q) -> None:
             await experiment_display(q)
 
         elif q.args.__wave_submission_name__ == "experiment/display/refresh":
+            await experiment_display(q)
+        elif q.args.__wave_submission_name__ == "experiment/display/early_stop":
+            experiment_id = q.client["experiment/display/experiment_id"]
+            await experiment_stop_early(q, [experiment_id])
             await experiment_display(q)
 
         elif q.args.__wave_submission_name__ == "experiment/display/charts":
