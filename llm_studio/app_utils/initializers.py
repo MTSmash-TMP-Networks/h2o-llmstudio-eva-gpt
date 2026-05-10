@@ -236,8 +236,7 @@ async def initialize_app(q: Q) -> None:
     if not q.app.initialized:
         logger.info("Initializing app ...")
 
-        icons_pth = "llm_studio/app_utils/static/"
-        (q.app["icon_path"],) = await q.site.upload([f"{icons_pth}/icon_300.svg"])
+        q.app["icon_path"] = "https://matelix.ai/pic/SVG.png"
 
         script_sources = []
 
