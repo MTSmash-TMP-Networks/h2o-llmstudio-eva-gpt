@@ -106,9 +106,9 @@ async def chat_tab(q: Q, load_model=True):
         events=["stop", "suggestion"],
         suggestions=[
             ui.chat_suggestion(
-                "Write a poem about H2O LLM Studio",
+                "Write a poem about MaTeLiX AI Studio",
                 label="Write a poem",
-                caption="about H2O LLM Studio",
+                caption="about MaTeLiX AI Studio",
                 icon="Edit",
             ),
             ui.chat_suggestion(

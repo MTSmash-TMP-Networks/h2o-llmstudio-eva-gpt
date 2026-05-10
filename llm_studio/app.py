@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 def on_startup() -> None:
     initialize_logging()
-    logger.info("Starting H2O LLM STUDIO")
+    logger.info("Starting MaTeLiX AI Studio")
 
 
 @app("/", on_startup=on_startup)
