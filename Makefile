@@ -26,7 +26,7 @@ uv:
 setup: uv  # Install dependencies
 	$(UV) sync --frozen --no-dev
 	-$(UV) sync --frozen --no-dev --extra flash
-	$(UV) pip install --python .venv/bin/python --upgrade "transformers @ git+https://github.com/MTSmash-TMP-Networks/transformers-eva-gpt.git@eva-gpt"
+	$(UV) pip install --python .venv/bin/python --upgrade --reinstall-package transformers --refresh-package transformers --no-cache "transformers @ git+https://github.com/MTSmash-TMP-Networks/transformers-eva-gpt.git@eva-gpt"
 
 .PHONY: setup-dev
 setup-dev: uv  # Install dependencies including dev dependencies
