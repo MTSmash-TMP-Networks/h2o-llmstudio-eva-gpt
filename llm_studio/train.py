@@ -258,12 +258,11 @@ def run_train(
         for itr, data in enumerate(tr_it):
             stop_training_path = os.path.join(cfg.output_directory, "stop_training")
             if os.path.exists(stop_training_path):
-                if cfg.training.save_checkpoint != "disable":
-                    logger.info(
-                        "Early stop requested. Saving last model checkpoint to "
-                        f"{cfg.output_directory}"
-                    )
-                    save_checkpoint(model=model, path=cfg.output_directory, cfg=cfg)
+                logger.info(
+                    "Early stop requested. Saving last model checkpoint to "
+                    f"{cfg.output_directory}"
+                )
+                save_checkpoint(model=model, path=cfg.output_directory, cfg=cfg)
                 try:
                     os.remove(stop_training_path)
                 except FileNotFoundError:
