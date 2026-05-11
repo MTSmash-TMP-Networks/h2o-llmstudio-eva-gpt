@@ -284,7 +284,11 @@ def publish_model_to_hugging_face(
         commit_message="Upload model",
     )
     push_signature = inspect.signature(model.backbone.push_to_hub)
-    if "safe_serialization" in push_signature.parameters:
+    transformers_major_version = int(transformers.__version__.split(".")[0])
+    if (
+        "safe_serialization" in push_signature.parameters
+        and transformers_major_version < 5
+    ):
         push_kwargs["safe_serialization"] = safe_serialization
     model.backbone.push_to_hub(**push_kwargs)
 
