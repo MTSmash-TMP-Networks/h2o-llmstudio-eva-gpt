@@ -236,18 +236,22 @@ def publish_model_to_hugging_face(
 
     repo_id = f"{user_id}/{hf_repo_friendly_name(model_name)}"
 
+    api = huggingface_hub.HfApi(token=api_key if api_key else None)
+    api.create_repo(repo_id=repo_id, repo_type="model", private=True, exist_ok=True)
+
     # push tokenizer to hub
     if cfg.problem_type in GENERATION_PROBLEM_TYPES:
         tokenizer.chat_template = get_chat_template(cfg)
-    tokenizer.push_to_hub(repo_id=repo_id, private=True)
+    tokenizer.push_to_hub(repo_id=repo_id, private=True, token=api_key)
 
     # push model card to hub
     card = get_model_card(cfg, model, repo_id)
     card.push_to_hub(
-        repo_id=repo_id, repo_type="model", commit_message="Upload model card"
+        repo_id=repo_id,
+        repo_type="model",
+        commit_message="Upload model card",
+        token=api_key,
     )
-
-    api = huggingface_hub.HfApi()
 
     # push classification head to hub
     if os.path.isfile(f"{path_to_experiment}/classification_head.pth"):
@@ -257,6 +261,7 @@ def publish_model_to_hugging_face(
             repo_id=repo_id,
             repo_type="model",
             commit_message="Upload classification_head.pth",
+            token=api_key,
         )
     # push regression head to hub
     if os.path.isfile(f"{path_to_experiment}/regression_head.pth"):
@@ -266,6 +271,7 @@ def publish_model_to_hugging_face(
             repo_id=repo_id,
             repo_type="model",
             commit_message="Upload regression_head.pth",
+            token=api_key,
         )
 
     # push config to hub
@@ -275,6 +281,7 @@ def publish_model_to_hugging_face(
         repo_id=repo_id,
         repo_type="model",
         commit_message="Upload cfg.yaml",
+        token=api_key,
     )
 
     # push model to hub
@@ -282,6 +289,7 @@ def publish_model_to_hugging_face(
         repo_id=repo_id,
         private=True,
         commit_message="Upload model",
+        token=api_key,
     )
     push_signature = inspect.signature(model.backbone.push_to_hub)
     transformers_major_version = int(transformers.__version__.split(".")[0])
