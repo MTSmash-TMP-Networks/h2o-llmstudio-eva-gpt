@@ -264,7 +264,11 @@ def run_train(
                         f"{cfg.output_directory}"
                     )
                     save_checkpoint(model=model, path=cfg.output_directory, cfg=cfg)
-                os.remove(stop_training_path)
+                try:
+                    os.remove(stop_training_path)
+                except FileNotFoundError:
+                    # Another process may have already consumed the stop marker.
+                    pass
                 cfg.environment._stop_requested = True
                 return 0, 0
 
