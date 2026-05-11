@@ -27,6 +27,26 @@ setup: uv  # Install dependencies
 	$(UV) sync --frozen --no-dev
 	-$(UV) sync --frozen --no-dev --extra flash
 	$(UV) pip install --python .venv/bin/python --upgrade --reinstall-package transformers --refresh-package transformers --no-cache "transformers @ git+https://github.com/MTSmash-TMP-Networks/transformers-eva-gpt.git@eva-gpt"
+	$(MAKE) verify-eva-gpt-transformers
+
+.PHONY: verify-eva-gpt-transformers
+verify-eva-gpt-transformers:  # Verify installed transformers matches latest eva-gpt branch revision
+	@set -euo pipefail; \
+	REMOTE_SHA="$$(git ls-remote https://github.com/MTSmash-TMP-Networks/transformers-eva-gpt.git refs/heads/eva-gpt | awk '{print $$1}')"; \
+	if [ -z "$$REMOTE_SHA" ]; then \
+		echo "Could not resolve remote eva-gpt branch sha" >&2; \
+		exit 1; \
+	fi; \
+	INSTALLED_SHA="$$(.venv/bin/python -c "import json,site; from pathlib import Path; p=next((Path(x)/'transformers-0.0.0.dist-info'/'direct_url.json' for x in site.getsitepackages() if (Path(x)/'transformers-0.0.0.dist-info'/'direct_url.json').exists()), None); print(json.loads(p.read_text()).get('vcs_info',{}).get('commit_id','') if p else '')")"; \
+	if [ -z "$$INSTALLED_SHA" ]; then \
+		echo "Could not determine installed transformers commit sha" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$REMOTE_SHA" != "$$INSTALLED_SHA" ]; then \
+		echo "transformers-eva-gpt mismatch: installed=$$INSTALLED_SHA remote=$$REMOTE_SHA" >&2; \
+		exit 1; \
+	fi; \
+	echo "transformers-eva-gpt is current (commit $$INSTALLED_SHA)"
 
 .PHONY: setup-dev
 setup-dev: uv  # Install dependencies including dev dependencies
