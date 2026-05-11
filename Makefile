@@ -37,7 +37,7 @@ verify-eva-gpt-transformers:  # Verify installed transformers matches latest eva
 		echo "Could not resolve remote eva-gpt branch sha" >&2; \
 		exit 1; \
 	fi; \
-	INSTALLED_SHA="$$(.venv/bin/python -c "import json,site; from pathlib import Path; p=next((Path(x)/'transformers-0.0.0.dist-info'/'direct_url.json' for x in site.getsitepackages() if (Path(x)/'transformers-0.0.0.dist-info'/'direct_url.json').exists()), None); print(json.loads(p.read_text()).get('vcs_info',{}).get('commit_id','') if p else '')")"; \
+	INSTALLED_SHA="$$(.venv/bin/python -c "import json; from importlib import metadata; from pathlib import Path; d=metadata.distribution('transformers'); p=Path(d.locate_file('direct_url.json')); print(json.loads(p.read_text()).get('vcs_info',{}).get('commit_id','') if p.exists() else '')")"; \
 	if [ -z "$$INSTALLED_SHA" ]; then \
 		echo "Could not determine installed transformers commit sha" >&2; \
 		exit 1; \
