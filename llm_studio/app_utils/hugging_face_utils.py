@@ -1,3 +1,4 @@
+import inspect
 import os
 
 import accelerate
@@ -277,12 +278,15 @@ def publish_model_to_hugging_face(
     )
 
     # push model to hub
-    model.backbone.push_to_hub(
+    push_kwargs = dict(
         repo_id=repo_id,
         private=True,
         commit_message="Upload model",
-        safe_serialization=safe_serialization,
     )
+    push_signature = inspect.signature(model.backbone.push_to_hub)
+    if "safe_serialization" in push_signature.parameters:
+        push_kwargs["safe_serialization"] = safe_serialization
+    model.backbone.push_to_hub(**push_kwargs)
 
     # Storing HF attributes
     output_directory = cfg.output_directory
