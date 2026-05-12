@@ -43,6 +43,13 @@ async def create_model(q: Q) -> None:
 
     model_name = q.client["experiment/create_model/model_name"] or "eva-mini131k-eva_gpt-dense-fp32"
     models_df = _get_created_models_df(get_output_dir(q))
+    created_model_choices = [
+        ui.choice(name=str(row["path"]), label=str(row["name"]))
+        for _, row in models_df.iterrows()
+    ]
+    selected_model_path = q.client["experiment/create_model/selected_model_path"]
+    if not selected_model_path and created_model_choices:
+        selected_model_path = created_model_choices[0].name
 
     items = [
         ui.text_xl("Create model"),
@@ -62,6 +69,22 @@ async def create_model(q: Q) -> None:
             [
                 ui.separator(),
                 ui.text_l("Created models"),
+                ui.dropdown(
+                    name="experiment/create_model/selected_model_path",
+                    label="Model for new experiment",
+                    choices=created_model_choices,
+                    value=selected_model_path,
+                    required=False,
+                ),
+                ui.buttons(
+                    items=[
+                        ui.button(
+                            name="experiment/create_model/create_experiment",
+                            label="Create experiment from selected model",
+                            primary=True,
+                        )
+                    ]
+                ),
                 ui_table_from_df(
                     q=q,
                     df=models_df,
@@ -139,10 +162,6 @@ async def create_model(q: Q) -> None:
                     ui.button(
                         name="experiment/create_model/logs",
                         label="Open logs",
-                    ),
-                    ui.button(
-                        name="experiment/create_model/create_experiment",
-                        label="Create experiment",
                     ),
                 ]
             ),
