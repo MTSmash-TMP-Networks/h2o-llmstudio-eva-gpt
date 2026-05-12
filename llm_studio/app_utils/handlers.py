@@ -304,6 +304,7 @@ async def handle(q: Q) -> None:
                     (
                         f"{shlex.join(tokenizer_cmd)} > {shlex.quote(tokenizer_log_path)} 2>&1"
                         f" && {shlex.join(model_cmd)}"
+                        f" && rm -rf {shlex.quote(run_base_dir)}"
                     ),
                 ]
                 pipeline_pid = start_background_command(pipeline_cmd, log_path=model_log_path)
