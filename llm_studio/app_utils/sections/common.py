@@ -105,11 +105,13 @@ async def meta(q: Q) -> None:
                 font-size: 1.25rem;
                 font-weight: 700;
                 letter-spacing: 0.02em;
+                color: #FFFFFF;
             }
 
             div[data-test="header"] .ms-Card-subtitle {
                 opacity: 0.9;
                 font-weight: 500;
+                color: #FFFFFF;
             }
             """
         ),
