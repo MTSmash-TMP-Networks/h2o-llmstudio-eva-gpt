@@ -45,32 +45,42 @@ def _extract_inline_code(text: str) -> list[str]:
     return [_mask_noise(s.strip()) for s in INLINE_CODE_RE.findall(text or "") if s.strip()]
 
 
-def _resolve_csv_path(csv_path: str) -> str:
-    path = Path(csv_path)
+def _resolve_table_path(data_path: str) -> str:
+    path = Path(data_path)
     if path.is_file():
         return str(path)
     if path.is_dir():
-        csv_candidates = sorted(path.glob("*.csv"))
-        if len(csv_candidates) == 1:
-            return str(csv_candidates[0])
-        if not csv_candidates:
-            raise FileNotFoundError(f"No CSV files found in directory: {path}")
+        candidates = sorted([*path.rglob("*.csv"), *path.rglob("*.pq"), *path.rglob("*.parquet")])
+        if len(candidates) == 1:
+            return str(candidates[0])
+        if not candidates:
+            raise FileNotFoundError(f"No CSV/Parquet files found in directory: {path}")
         raise ValueError(
-            f"Expected one CSV file in directory '{path}', found {len(csv_candidates)}: "
-            + ", ".join(p.name for p in csv_candidates)
+            f"Expected one CSV/Parquet file in directory '{path}', found {len(candidates)}: "
+            + ", ".join(str(p.relative_to(path)) for p in candidates[:20])
         )
-    raise FileNotFoundError(f"CSV path does not exist: {path}")
+    raise FileNotFoundError(f"Input path does not exist: {path}")
 
 
-def build_training_file(csv_path: str, out_txt: str, max_line_chars: int) -> None:
-    header = pd.read_csv(csv_path, nrows=0)
+def build_training_file(table_path: str, out_txt: str, max_line_chars: int) -> None:
+    ext = Path(table_path).suffix.lower()
+    if ext == ".csv":
+        header = pd.read_csv(table_path, nrows=0)
+        row_iter = pd.read_csv(table_path, chunksize=20_000)
+    elif ext in {".pq", ".parquet"}:
+        df = pd.read_parquet(table_path)
+        header = df.head(0)
+        row_iter = (df,)
+    else:
+        raise ValueError(f"Unsupported dataset extension '{ext}' for file: {table_path}")
+
     cols = [c for c in header.columns if str(c).strip() and not str(c).startswith("Unnamed:")]
     if not cols:
-        raise ValueError("CSV has no usable columns")
+        raise ValueError("Dataset has no usable columns")
 
     Path(out_txt).parent.mkdir(parents=True, exist_ok=True)
     with open(out_txt, "w", encoding="utf-8") as out:
-        for chunk in pd.read_csv(csv_path, chunksize=20_000):
+        for chunk in row_iter:
             lines = []
             for _, row in chunk.iterrows():
                 text = "\n".join(_clean_text(row.get(c, "")) for c in cols if _clean_text(row.get(c, "")))
@@ -105,7 +115,7 @@ def reservoir_sample(input_path: str, output_path: str, max_lines: int, seed: in
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--csv", required=True)
+    p.add_argument("--csv", required=True, help="Path to CSV/Parquet file or directory containing exactly one dataset file")
     p.add_argument("--tokenizer-dir", default="./tokenizer")
     p.add_argument("--tokenizer-fast-dir", default="./tokenizer_fast")
     p.add_argument("--model-prefix", default="tokenizer")
@@ -114,7 +124,7 @@ def main() -> None:
     p.add_argument("--max-line-chars", type=int, default=4096)
     args = p.parse_args()
 
-    args.csv = _resolve_csv_path(args.csv)
+    args.csv = _resolve_table_path(args.csv)
 
     train_txt = os.path.join(os.path.dirname(args.csv), "train_data_from_csv.txt")
     sampled_txt = os.path.join(os.path.dirname(args.csv), "train_data_sampled.txt")
