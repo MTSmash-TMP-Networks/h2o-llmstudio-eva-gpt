@@ -108,6 +108,11 @@ async def meta(q: Q) -> None:
                 color: #FFFFFF;
             }
 
+            div[data-test="header"] .wave-s24.wave-w5,
+            div[data-test="header"] .wave-w5 {
+                color: #FFFFFF !important;
+            }
+
             div[data-test="header"] .ms-Card-subtitle {
                 opacity: 0.9;
                 font-weight: 500;
