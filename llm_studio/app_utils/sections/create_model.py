@@ -30,8 +30,7 @@ async def create_model(q: Q) -> None:
             ui.message_bar(
                 type="info",
                 text=(
-                    "This workflow currently provides an in-UI assistant and path setup. "
-                    "Training and model creation still run as Python jobs in your environment."
+                    "This workflow configures and generates ready-to-run training commands for tokenizer and dense-model initialization."
                 ),
             ),
             ui.dropdown(
@@ -51,6 +50,12 @@ async def create_model(q: Q) -> None:
                 label="Model output directory",
                 value="./eva-mini131k-eva_gpt-dense-fp32",
             ),
+            ui.separator(),
+            ui.text_l("Run pipeline"),
+            ui.text("1) Train tokenizer:"),
+            ui.text("python scripts/create_model/train_tokenizer.py --csv <path-to-dataset.csv> --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
+            ui.text("2) Initialize dense EvaGPT model:"),
+            ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
             ui.separator(),
             ui.text_l("Next steps"),
             ui.text(
@@ -72,8 +77,8 @@ async def create_model(q: Q) -> None:
 
     # Ensure directories are displayed as normalized paths for consistency.
     q.client["experiment/create_model/tokenizer_dir"] = os.path.normpath(
-        q.client.get("experiment/create_model/tokenizer_dir", "./tokenizer_fast")
+        q.client["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"
     )
     q.client["experiment/create_model/model_dir"] = os.path.normpath(
-        q.client.get("experiment/create_model/model_dir", "./eva-mini131k-eva_gpt-dense-fp32")
+        q.client["experiment/create_model/model_dir"] or "./eva-mini131k-eva_gpt-dense-fp32"
     )
