@@ -224,7 +224,10 @@ async def handle(q: Q) -> None:
             q.args.__wave_submission_name__
             == "experiment/create_model/create_experiment"
         ):
-            selected_model_path = q.args["experiment/create_model/selected_model_path"]
+            selected_model_path = (
+                q.args["experiment/create_model/selected_model_path"]
+                or q.client["experiment/create_model/selected_model_path"]
+            )
             if selected_model_path:
                 q.client["experiment/create_model/selected_model_path"] = selected_model_path
                 q.client["experiment/start/preselected_model_path"] = selected_model_path

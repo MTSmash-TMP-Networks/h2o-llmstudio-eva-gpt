@@ -488,6 +488,11 @@ async def experiment_start(q: Q) -> None:
     logger.info(f"From default {q.client['experiment/start/cfg_mode/from_default']}")
     logger.info(f"Config file: {q.client['experiment/start/cfg_file']}")
 
+    preselected_model_path = q.client["experiment/start/preselected_model_path"]
+    if preselected_model_path:
+        q.client["experiment/start/cfg"].llm_backbone = preselected_model_path
+        q.client["experiment/start/preselected_model_path"] = None
+
     option_items = get_ui_elements_for_cfg(cfg=q.client["experiment/start/cfg"], q=q)
     items.extend(option_items)
 
