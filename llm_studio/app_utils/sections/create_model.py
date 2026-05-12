@@ -1,5 +1,7 @@
 import os
+import signal
 import subprocess
+import time
 
 from h2o_wave import Q, ui
 
@@ -140,49 +142,110 @@ async def create_model(q: Q) -> None:
         )
 
 
-async def create_model_logs(q: Q) -> None:
+async def create_model_logs(q: Q, follow: bool = False) -> None:
     q.client["nav/active"] = "experiment/create_model"
-    await clean_dashboard(q, mode="full")
 
-    tokenizer_log_path = q.client["experiment/create_model/tokenizer_log_path"]
-    model_log_path = q.client["experiment/create_model/model_log_path"]
+    async def _render_logs() -> bool:
+        await clean_dashboard(q, mode="full")
 
-    tokenizer_log_text = tail_log(tokenizer_log_path) if tokenizer_log_path else ""
-    model_log_text = tail_log(model_log_path) if model_log_path else ""
+        tokenizer_log_path = q.client["experiment/create_model/tokenizer_log_path"]
+        model_log_path = q.client["experiment/create_model/model_log_path"]
+        pipeline_pid = q.client["experiment/create_model/pipeline_pid"]
+        pipeline_started_at = q.client["experiment/create_model/pipeline_started_at"]
 
-    q.page["experiment/create_model/logs"] = ui.form_card(
-        box="content",
-        items=[
-            ui.text_xl("Create model logs"),
-            ui.buttons(
-                items=[
-                    ui.button(
-                        name="experiment/create_model/logs",
-                        label="Refresh",
-                        primary=True,
+        tokenizer_log_text = tail_log(tokenizer_log_path) if tokenizer_log_path else ""
+        model_log_text = tail_log(model_log_path) if model_log_path else ""
+        is_running = _is_process_running(pipeline_pid)
+        elapsed_text = "n/a"
+        if pipeline_started_at:
+            elapsed_text = _format_duration(time.time() - float(pipeline_started_at))
+        remaining_seconds = _estimate_remaining_seconds(pipeline_started_at, is_running)
+        remaining_text = (
+            _format_duration(remaining_seconds) if remaining_seconds and is_running else "Wird berechnet…" if is_running else "0s"
+        )
+        status_text = "Running" if is_running else "Completed"
+
+        q.page["experiment/create_model/logs"] = ui.form_card(
+            box="content",
+            items=[
+                ui.text_xl("Create model logs"),
+                ui.buttons(
+                    items=[
+                        ui.button(
+                            name="experiment/create_model/logs",
+                            label="Refresh",
+                            primary=True,
+                        ),
+                        ui.button(name="experiment/create_model", label="Back"),
+                    ]
+                ),
+                ui.message_bar(
+                    type="info",
+                    text=(
+                        f"Pipeline status: {status_text}. Laufzeit: {elapsed_text}. "
+                        f"Geschätzte Restzeit: {remaining_text}."
                     ),
-                    ui.button(name="experiment/create_model", label="Back"),
-                ]
-            ),
-            ui.text_l("Tokenizer log"),
-            ui.text(
-                f"Log file: {tokenizer_log_path}"
-                if tokenizer_log_path
-                else "No tokenizer log file yet."
-            ),
-            ui.text(f"```text\n{tokenizer_log_text or 'No log output yet.'}\n```"),
-            ui.separator(),
-            ui.text_l("Model initialization log"),
-            ui.text(
-                f"Log file: {model_log_path}"
-                if model_log_path
-                else "No model log file yet."
-            ),
-            ui.text(f"```text\n{model_log_text or 'No log output yet.'}\n```"),
-        ],
-    )
-    q.client.delete_cards.add("experiment/create_model/logs")
+                ),
+                ui.text_l("Tokenizer log"),
+                ui.text(
+                    f"Log file: {tokenizer_log_path}"
+                    if tokenizer_log_path
+                    else "No tokenizer log file yet."
+                ),
+                ui.text(f"```text\n{tokenizer_log_text or 'No log output yet.'}\n```"),
+                ui.separator(),
+                ui.text_l("Model initialization log"),
+                ui.text(
+                    f"Log file: {model_log_path}"
+                    if model_log_path
+                    else "No model log file yet."
+                ),
+                ui.text(f"```text\n{model_log_text or 'No log output yet.'}\n```"),
+            ],
+        )
+        q.client.delete_cards.add("experiment/create_model/logs")
+        await q.page.save()
 
+        if not is_running:
+            q.client["experiment/create_model/pipeline_pid"] = None
+        return is_running
+
+    is_running = await _render_logs()
+    while follow and is_running:
+        await q.sleep(2)
+        is_running = await _render_logs()
+
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _is_process_running(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _estimate_remaining_seconds(start_time: float | None, is_running: bool) -> int | None:
+    if not start_time or not is_running:
+        return 0
+    elapsed = max(0.0, time.time() - start_time)
+    estimated_total = 45 * 60
+    return max(0, int(estimated_total - elapsed))
 
 
 def start_background_command(cmd: list[str], log_path: str) -> int:

@@ -2,6 +2,7 @@ import gc
 import logging
 import os
 import shlex
+import time
 
 import torch
 from h2o_wave import Q
@@ -305,10 +306,12 @@ async def handle(q: Q) -> None:
                 ]
                 pipeline_pid = start_background_command(pipeline_cmd, log_path=model_log_path)
                 q.client["experiment/create_model/model_log_path"] = model_log_path
+                q.client["experiment/create_model/pipeline_pid"] = pipeline_pid
+                q.client["experiment/create_model/pipeline_started_at"] = time.time()
                 q.client["notification_bar"] = (
-                    f"Create model pipeline started (PID {pipeline_pid})."
+                    f"Create model pipeline started (PID {pipeline_pid}). Logs refresh automatically until completion."
                 )
-                await create_model_logs(q)
+                await create_model_logs(q, follow=True)
 
         elif (
             q.args.__wave_submission_name__ == "experiment/start"
