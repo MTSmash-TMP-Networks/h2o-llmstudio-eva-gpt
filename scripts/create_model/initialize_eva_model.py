@@ -12,6 +12,11 @@ def main() -> None:
     p.add_argument("--out-dir", default="./eva-mini131k-eva_gpt-dense-fp32")
     p.add_argument("--orig-max-pos", type=int, default=8192)
     p.add_argument("--new-max-pos", type=int, default=131072)
+    p.add_argument("--hidden-size", type=int, default=2048)
+    p.add_argument("--intermediate-size", type=int, default=8192)
+    p.add_argument("--num-hidden-layers", type=int, default=16)
+    p.add_argument("--num-attention-heads", type=int, default=32)
+    p.add_argument("--num-key-value-heads", type=int, default=8)
     args = p.parse_args()
 
     if os.path.isdir(args.out_dir):
@@ -28,11 +33,11 @@ def main() -> None:
 
     cfg = AutoConfig.for_model("eva_gpt")
     cfg.vocab_size = len(tok)
-    cfg.hidden_size = 2048
-    cfg.intermediate_size = 8192
-    cfg.num_hidden_layers = 16
-    cfg.num_attention_heads = 32
-    cfg.num_key_value_heads = 8
+    cfg.hidden_size = args.hidden_size
+    cfg.intermediate_size = args.intermediate_size
+    cfg.num_hidden_layers = args.num_hidden_layers
+    cfg.num_attention_heads = args.num_attention_heads
+    cfg.num_key_value_heads = args.num_key_value_heads
     cfg.head_dim = cfg.hidden_size // cfg.num_attention_heads
     cfg.hidden_act = "silu"
     cfg.max_position_embeddings = args.new_max_pos

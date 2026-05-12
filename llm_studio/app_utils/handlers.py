@@ -7,6 +7,7 @@ from h2o_wave import Q
 from llm_studio.app_utils.sections.chat import chat_tab
 from llm_studio.app_utils.sections.chat_update import chat_copy, chat_update
 from llm_studio.app_utils.sections.create_model import create_model
+from llm_studio.app_utils.sections.create_model import start_background_command
 from llm_studio.app_utils.sections.common import delete_dialog
 from llm_studio.app_utils.sections.dataset import (
     dataset_delete_current_datasets,
@@ -211,6 +212,57 @@ async def handle(q: Q) -> None:
             await experiment_start(q)
 
         elif q.args.__wave_submission_name__ == "experiment/create_model":
+            await create_model(q)
+        elif q.args.__wave_submission_name__ == "experiment/create_model/start_tokenizer":
+            dataset_id = q.args["experiment/create_model/dataset_id"]
+            datasets_df = q.client.app_db.get_datasets_df()
+            selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
+            if selected_rows.empty:
+                q.client["notification_bar"] = "Please select a dataset first."
+            else:
+                csv_path = selected_rows.iloc[0].path
+                tokenizer_dir = q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer"
+                tokenizer_fast_dir = (
+                    q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"
+                )
+                cmd = [
+                    "python",
+                    "scripts/create_model/train_tokenizer.py",
+                    "--csv",
+                    csv_path,
+                    "--tokenizer-dir",
+                    tokenizer_dir,
+                    "--tokenizer-fast-dir",
+                    tokenizer_fast_dir,
+                    "--vocab-size",
+                    str(q.args["experiment/create_model/vocab_size"] or 128256),
+                    "--max-lines",
+                    str(q.args["experiment/create_model/max_lines"] or 500000),
+                ]
+                pid = start_background_command(cmd)
+                q.client["notification_bar"] = f"Tokenizer training started (PID {pid})."
+            await create_model(q)
+        elif q.args.__wave_submission_name__ == "experiment/create_model/start_model_init":
+            cmd = [
+                "python",
+                "scripts/create_model/initialize_eva_model.py",
+                "--tokenizer-src",
+                str(q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"),
+                "--out-dir",
+                str(q.args["experiment/create_model/model_dir"] or "./eva-mini131k-eva_gpt-dense-fp32"),
+                "--hidden-size",
+                str(q.args["experiment/create_model/hidden_size"] or 2048),
+                "--intermediate-size",
+                str(q.args["experiment/create_model/intermediate_size"] or 8192),
+                "--num-hidden-layers",
+                str(q.args["experiment/create_model/num_hidden_layers"] or 16),
+                "--num-attention-heads",
+                str(q.args["experiment/create_model/num_attention_heads"] or 32),
+                "--num-key-value-heads",
+                str(q.args["experiment/create_model/num_key_value_heads"] or 8),
+            ]
+            pid = start_background_command(cmd)
+            q.client["notification_bar"] = f"Model creation started (PID {pid})."
             await create_model(q)
 
         elif (

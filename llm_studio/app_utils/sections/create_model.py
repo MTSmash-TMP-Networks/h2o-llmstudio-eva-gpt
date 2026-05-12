@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 from h2o_wave import Q, ui
 
@@ -19,6 +20,22 @@ async def create_model(q: Q) -> None:
             ui.choice(name=str(row.id), label=f"{row.name} ({row.path})")
             for _, row in datasets_df.iterrows()
         ]
+
+    vocab_size = str(q.client.get("experiment/create_model/vocab_size") or 128256)
+    max_lines = str(q.client.get("experiment/create_model/max_lines") or 500000)
+    hidden_size = str(q.client.get("experiment/create_model/hidden_size") or 2048)
+    intermediate_size = str(
+        q.client.get("experiment/create_model/intermediate_size") or 8192
+    )
+    num_hidden_layers = str(
+        q.client.get("experiment/create_model/num_hidden_layers") or 16
+    )
+    num_attention_heads = str(
+        q.client.get("experiment/create_model/num_attention_heads") or 32
+    )
+    num_key_value_heads = str(
+        q.client.get("experiment/create_model/num_key_value_heads") or 8
+    )
 
     q.page["experiment/create_model"] = ui.form_card(
         box="content",
@@ -49,6 +66,56 @@ async def create_model(q: Q) -> None:
                 name="experiment/create_model/model_dir",
                 label="Model output directory",
                 value="./eva-mini131k-eva_gpt-dense-fp32",
+            ),
+            ui.text_l("Tokenizer settings"),
+            ui.textbox(
+                name="experiment/create_model/vocab_size",
+                label="Token count (vocab size)",
+                value=vocab_size,
+            ),
+            ui.textbox(
+                name="experiment/create_model/max_lines",
+                label="Max sampled lines",
+                value=max_lines,
+            ),
+            ui.text_l("Model architecture settings"),
+            ui.textbox(
+                name="experiment/create_model/hidden_size",
+                label="Hidden size",
+                value=hidden_size,
+            ),
+            ui.textbox(
+                name="experiment/create_model/intermediate_size",
+                label="Intermediate size",
+                value=intermediate_size,
+            ),
+            ui.textbox(
+                name="experiment/create_model/num_hidden_layers",
+                label="Layer count",
+                value=num_hidden_layers,
+            ),
+            ui.textbox(
+                name="experiment/create_model/num_attention_heads",
+                label="Attention heads",
+                value=num_attention_heads,
+            ),
+            ui.textbox(
+                name="experiment/create_model/num_key_value_heads",
+                label="KV heads",
+                value=num_key_value_heads,
+            ),
+            ui.buttons(
+                items=[
+                    ui.button(
+                        name="experiment/create_model/start_tokenizer",
+                        label="Start tokenizer training",
+                        primary=True,
+                    ),
+                    ui.button(
+                        name="experiment/create_model/start_model_init",
+                        label="Start model creation",
+                    ),
+                ]
             ),
             ui.separator(),
             ui.text_l("Run pipeline"),
@@ -82,3 +149,13 @@ async def create_model(q: Q) -> None:
     q.client["experiment/create_model/model_dir"] = os.path.normpath(
         q.client["experiment/create_model/model_dir"] or "./eva-mini131k-eva_gpt-dense-fp32"
     )
+
+
+def start_background_command(cmd: list[str]) -> int:
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return process.pid
