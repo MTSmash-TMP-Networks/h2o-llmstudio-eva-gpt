@@ -215,12 +215,28 @@ async def handle(q: Q) -> None:
 
         elif q.args.__wave_submission_name__ == "experiment/create_model":
             await create_model(q)
+        elif q.args.__wave_submission_name__ == "experiment/create_model/refresh_logs":
+            await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/start_tokenizer":
             dataset_id = q.args["experiment/create_model/dataset_id"]
+            q.client["experiment/create_model/dataset_id"] = dataset_id
             model_name = (
                 q.args["experiment/create_model/model_name"]
                 or "eva-mini131k-eva_gpt-dense-fp32"
             )
+            q.client["experiment/create_model/model_name"] = model_name
+            q.client["experiment/create_model/tokenizer_dir"] = q.args[
+                "experiment/create_model/tokenizer_dir"
+            ]
+            q.client["experiment/create_model/model_dir"] = q.args[
+                "experiment/create_model/model_dir"
+            ]
+            q.client["experiment/create_model/vocab_size"] = q.args[
+                "experiment/create_model/vocab_size"
+            ]
+            q.client["experiment/create_model/max_lines"] = q.args[
+                "experiment/create_model/max_lines"
+            ]
             run_base_dir = os.path.join(get_output_dir(q), model_name)
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
@@ -252,6 +268,7 @@ async def handle(q: Q) -> None:
                 ]
                 log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
                 pid = start_background_command(cmd, log_path=log_path)
+                q.client["experiment/create_model/tokenizer_log_path"] = log_path
                 q.client["notification_bar"] = (
                     f"Tokenizer training started (PID {pid}). Log: {log_path}"
                 )
