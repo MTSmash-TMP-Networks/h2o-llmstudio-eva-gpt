@@ -6,6 +6,7 @@ from h2o_wave import Q
 
 from llm_studio.app_utils.sections.chat import chat_tab
 from llm_studio.app_utils.sections.chat_update import chat_copy, chat_update
+from llm_studio.app_utils.sections.create_model import create_model
 from llm_studio.app_utils.sections.common import delete_dialog
 from llm_studio.app_utils.sections.dataset import (
     dataset_delete_current_datasets,
@@ -208,6 +209,10 @@ async def handle(q: Q) -> None:
                 q.client["experiment/start/cfg_experiment"] = str(experiment_id)
 
             await experiment_start(q)
+
+        elif q.args.__wave_submission_name__ == "experiment/create_model":
+            await create_model(q)
+
         elif (
             q.args.__wave_submission_name__ == "experiment/start"
             or q.args.__wave_submission_name__ == "experiment/start/grid_search"
