@@ -45,6 +45,23 @@ def _extract_inline_code(text: str) -> list[str]:
     return [_mask_noise(s.strip()) for s in INLINE_CODE_RE.findall(text or "") if s.strip()]
 
 
+def _resolve_csv_path(csv_path: str) -> str:
+    path = Path(csv_path)
+    if path.is_file():
+        return str(path)
+    if path.is_dir():
+        csv_candidates = sorted(path.glob("*.csv"))
+        if len(csv_candidates) == 1:
+            return str(csv_candidates[0])
+        if not csv_candidates:
+            raise FileNotFoundError(f"No CSV files found in directory: {path}")
+        raise ValueError(
+            f"Expected one CSV file in directory '{path}', found {len(csv_candidates)}: "
+            + ", ".join(p.name for p in csv_candidates)
+        )
+    raise FileNotFoundError(f"CSV path does not exist: {path}")
+
+
 def build_training_file(csv_path: str, out_txt: str, max_line_chars: int) -> None:
     cols = ["system", "Kontext", "Benutzer", "Assistentin"]
     header = pd.read_csv(csv_path, nrows=0)
@@ -97,6 +114,8 @@ def main() -> None:
     p.add_argument("--max-lines", type=int, default=500000)
     p.add_argument("--max-line-chars", type=int, default=4096)
     args = p.parse_args()
+
+    args.csv = _resolve_csv_path(args.csv)
 
     train_txt = os.path.join(os.path.dirname(args.csv), "train_data_from_csv.txt")
     sampled_txt = os.path.join(os.path.dirname(args.csv), "train_data_sampled.txt")
