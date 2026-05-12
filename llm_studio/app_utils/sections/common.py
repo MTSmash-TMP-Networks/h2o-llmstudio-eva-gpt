@@ -92,6 +92,7 @@ async def meta(q: Q) -> None:
                 border-radius: 16px;
                 overflow: hidden;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+                background: linear-gradient(135deg, #111827 0%, #1E293B 55%, #7C4DFF 100%) !important;
             }
 
             div[data-test="header"] .ms-Card {
