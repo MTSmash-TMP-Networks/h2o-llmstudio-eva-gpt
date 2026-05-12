@@ -21,21 +21,17 @@ async def create_model(q: Q) -> None:
             for _, row in datasets_df.iterrows()
         ]
 
-    vocab_size = str(q.client.get("experiment/create_model/vocab_size") or 128256)
-    max_lines = str(q.client.get("experiment/create_model/max_lines") or 500000)
-    hidden_size = str(q.client.get("experiment/create_model/hidden_size") or 2048)
-    intermediate_size = str(
-        q.client.get("experiment/create_model/intermediate_size") or 8192
-    )
-    num_hidden_layers = str(
-        q.client.get("experiment/create_model/num_hidden_layers") or 16
-    )
-    num_attention_heads = str(
-        q.client.get("experiment/create_model/num_attention_heads") or 32
-    )
-    num_key_value_heads = str(
-        q.client.get("experiment/create_model/num_key_value_heads") or 8
-    )
+    def _client_value(key: str, default: int) -> str:
+        value = q.client[key] if key in q.client else default
+        return str(value or default)
+
+    vocab_size = _client_value("experiment/create_model/vocab_size", 128256)
+    max_lines = _client_value("experiment/create_model/max_lines", 500000)
+    hidden_size = _client_value("experiment/create_model/hidden_size", 2048)
+    intermediate_size = _client_value("experiment/create_model/intermediate_size", 8192)
+    num_hidden_layers = _client_value("experiment/create_model/num_hidden_layers", 16)
+    num_attention_heads = _client_value("experiment/create_model/num_attention_heads", 32)
+    num_key_value_heads = _client_value("experiment/create_model/num_key_value_heads", 8)
 
     q.page["experiment/create_model"] = ui.form_card(
         box="content",
