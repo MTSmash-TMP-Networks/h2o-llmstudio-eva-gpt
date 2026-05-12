@@ -1,5 +1,6 @@
 import gc
 import logging
+import os
 
 import torch
 from h2o_wave import Q
@@ -53,6 +54,7 @@ from llm_studio.app_utils.setting_utils import (
     save_user_settings_and_secrets,
 )
 from llm_studio.app_utils.utils import add_model_type
+from llm_studio.app_utils.utils import get_output_dir
 from llm_studio.app_utils.wave_utils import report_error, wave_utils_handle_error
 
 logger = logging.getLogger(__name__)
@@ -215,15 +217,24 @@ async def handle(q: Q) -> None:
             await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/start_tokenizer":
             dataset_id = q.args["experiment/create_model/dataset_id"]
+            model_name = (
+                q.args["experiment/create_model/model_name"]
+                or "eva-mini131k-eva_gpt-dense-fp32"
+            )
+            run_base_dir = os.path.join(get_output_dir(q), model_name)
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
             if selected_rows.empty:
                 q.client["notification_bar"] = "Please select a dataset first."
             else:
                 csv_path = selected_rows.iloc[0].path
-                tokenizer_dir = q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer"
+                tokenizer_dir = (
+                    q.args["experiment/create_model/tokenizer_dir"]
+                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer")
+                )
                 tokenizer_fast_dir = (
-                    q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"
+                    q.args["experiment/create_model/tokenizer_dir"]
+                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
                 )
                 cmd = [
                     "python",
@@ -239,17 +250,31 @@ async def handle(q: Q) -> None:
                     "--max-lines",
                     str(q.args["experiment/create_model/max_lines"] or 500000),
                 ]
-                pid = start_background_command(cmd)
-                q.client["notification_bar"] = f"Tokenizer training started (PID {pid})."
+                log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
+                pid = start_background_command(cmd, log_path=log_path)
+                q.client["notification_bar"] = (
+                    f"Tokenizer training started (PID {pid}). Log: {log_path}"
+                )
             await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/start_model_init":
+            model_name = (
+                q.args["experiment/create_model/model_name"]
+                or "eva-mini131k-eva_gpt-dense-fp32"
+            )
+            run_base_dir = os.path.join(get_output_dir(q), model_name)
             cmd = [
                 "python",
                 "scripts/create_model/initialize_eva_model.py",
                 "--tokenizer-src",
-                str(q.args["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"),
+                str(
+                    q.args["experiment/create_model/tokenizer_dir"]
+                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
+                ),
                 "--out-dir",
-                str(q.args["experiment/create_model/model_dir"] or "./eva-mini131k-eva_gpt-dense-fp32"),
+                str(
+                    q.args["experiment/create_model/model_dir"]
+                    or os.path.join(get_output_dir(q), model_name)
+                ),
                 "--hidden-size",
                 str(q.args["experiment/create_model/hidden_size"] or 2048),
                 "--intermediate-size",
@@ -261,8 +286,11 @@ async def handle(q: Q) -> None:
                 "--num-key-value-heads",
                 str(q.args["experiment/create_model/num_key_value_heads"] or 8),
             ]
-            pid = start_background_command(cmd)
-            q.client["notification_bar"] = f"Model creation started (PID {pid})."
+            log_path = os.path.join(run_base_dir, "create_model_init.log")
+            pid = start_background_command(cmd, log_path=log_path)
+            q.client["notification_bar"] = (
+                f"Model creation started (PID {pid}). Log: {log_path}"
+            )
             await create_model(q)
 
         elif (

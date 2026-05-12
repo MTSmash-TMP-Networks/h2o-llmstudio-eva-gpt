@@ -4,6 +4,7 @@ import subprocess
 from h2o_wave import Q, ui
 
 from llm_studio.app_utils.sections.common import clean_dashboard
+from llm_studio.app_utils.utils import get_output_dir
 
 
 async def create_model(q: Q) -> None:
@@ -33,6 +34,10 @@ async def create_model(q: Q) -> None:
     num_attention_heads = _client_value("experiment/create_model/num_attention_heads", 32)
     num_key_value_heads = _client_value("experiment/create_model/num_key_value_heads", 8)
 
+    model_name = q.client["experiment/create_model/model_name"] or "eva-mini131k-eva_gpt-dense-fp32"
+    default_model_dir = os.path.join(get_output_dir(q), model_name)
+    default_tokenizer_dir = os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
+
     q.page["experiment/create_model"] = ui.form_card(
         box="content",
         items=[
@@ -54,14 +59,19 @@ async def create_model(q: Q) -> None:
                 required=False,
             ),
             ui.textbox(
+                name="experiment/create_model/model_name",
+                label="Model name",
+                value=model_name,
+            ),
+            ui.textbox(
                 name="experiment/create_model/tokenizer_dir",
                 label="Tokenizer output directory",
-                value="./tokenizer_fast",
+                value=default_tokenizer_dir,
             ),
             ui.textbox(
                 name="experiment/create_model/model_dir",
                 label="Model output directory",
-                value="./eva-mini131k-eva_gpt-dense-fp32",
+                value=default_model_dir,
             ),
             ui.text_l("Tokenizer settings"),
             ui.textbox(
@@ -147,11 +157,13 @@ async def create_model(q: Q) -> None:
     )
 
 
-def start_background_command(cmd: list[str]) -> int:
+def start_background_command(cmd: list[str], log_path: str) -> int:
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    log_file = open(log_path, "a")
     process = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=log_file,
         start_new_session=True,
     )
     return process.pid
