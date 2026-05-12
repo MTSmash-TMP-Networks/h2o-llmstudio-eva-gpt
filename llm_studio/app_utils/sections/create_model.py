@@ -18,7 +18,7 @@ async def create_model(q: Q) -> None:
 
     if datasets_df.shape[0] > 0:
         dataset_choices = [
-            ui.choice(name=str(row.id), label=f"{row.name} ({row.path})")
+            ui.choice(name=str(row.id), label=row.name)
             for _, row in datasets_df.iterrows()
         ]
 
