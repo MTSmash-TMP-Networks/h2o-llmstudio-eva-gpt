@@ -140,6 +140,10 @@ async def create_model(q: Q) -> None:
                         name="experiment/create_model/logs",
                         label="Open logs",
                     ),
+                    ui.button(
+                        name="experiment/create_model/create_experiment",
+                        label="Create experiment",
+                    ),
                 ]
             ),
             ui.separator(),

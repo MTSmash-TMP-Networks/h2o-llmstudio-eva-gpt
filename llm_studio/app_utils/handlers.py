@@ -220,6 +220,13 @@ async def handle(q: Q) -> None:
             await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/logs":
             await create_model_logs(q)
+        elif (
+            q.args.__wave_submission_name__
+            == "experiment/create_model/create_experiment"
+        ):
+            q.client["experiment/start/cfg_category"] = None
+            q.client["experiment/start/cfg_file"] = None
+            await experiment_start(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/start_pipeline":
             dataset_id = q.args["experiment/create_model/dataset_id"]
             q.client["experiment/create_model/dataset_id"] = dataset_id
