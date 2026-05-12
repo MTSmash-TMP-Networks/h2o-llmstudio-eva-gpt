@@ -225,12 +225,6 @@ async def handle(q: Q) -> None:
                 or "eva-mini131k-eva_gpt-dense-fp32"
             )
             q.client["experiment/create_model/model_name"] = model_name
-            q.client["experiment/create_model/tokenizer_dir"] = q.args[
-                "experiment/create_model/tokenizer_dir"
-            ]
-            q.client["experiment/create_model/model_dir"] = q.args[
-                "experiment/create_model/model_dir"
-            ]
             q.client["experiment/create_model/vocab_size"] = q.args[
                 "experiment/create_model/vocab_size"
             ]
@@ -244,14 +238,9 @@ async def handle(q: Q) -> None:
                 q.client["notification_bar"] = "Please select a dataset first."
             else:
                 csv_path = selected_rows.iloc[0].path
-                tokenizer_dir = (
-                    q.args["experiment/create_model/tokenizer_dir"]
-                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer")
-                )
-                tokenizer_fast_dir = (
-                    q.args["experiment/create_model/tokenizer_dir"]
-                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
-                )
+                model_dir = os.path.join(get_output_dir(q), model_name)
+                tokenizer_dir = os.path.join(model_dir, "tokenizer")
+                tokenizer_fast_dir = os.path.join(model_dir, "tokenizer_fast")
                 cmd = [
                     "python",
                     "scripts/create_model/train_tokenizer.py",
@@ -284,13 +273,11 @@ async def handle(q: Q) -> None:
                 "scripts/create_model/initialize_eva_model.py",
                 "--tokenizer-src",
                 str(
-                    q.args["experiment/create_model/tokenizer_dir"]
-                    or os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
+                    os.path.join(get_output_dir(q), model_name, "tokenizer_fast")
                 ),
                 "--out-dir",
                 str(
-                    q.args["experiment/create_model/model_dir"]
-                    or os.path.join(get_output_dir(q), model_name)
+                    os.path.join(get_output_dir(q), model_name)
                 ),
                 "--hidden-size",
                 str(q.args["experiment/create_model/hidden_size"] or 2048),

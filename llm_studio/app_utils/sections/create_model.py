@@ -43,8 +43,6 @@ async def create_model(q: Q) -> None:
         tokenizer_log_text = tail_log(tokenizer_log_path)
 
     model_name = q.client["experiment/create_model/model_name"] or "eva-mini131k-eva_gpt-dense-fp32"
-    default_model_dir = os.path.join(get_output_dir(q), model_name)
-    default_tokenizer_dir = os.path.join(get_output_dir(q), f"{model_name}_tokenizer_fast")
 
     q.page["experiment/create_model"] = ui.form_card(
         box="content",
@@ -70,16 +68,6 @@ async def create_model(q: Q) -> None:
                 name="experiment/create_model/model_name",
                 label="Model name",
                 value=model_name,
-            ),
-            ui.textbox(
-                name="experiment/create_model/tokenizer_dir",
-                label="Tokenizer output directory",
-                value=default_tokenizer_dir,
-            ),
-            ui.textbox(
-                name="experiment/create_model/model_dir",
-                label="Model output directory",
-                value=default_model_dir,
             ),
             ui.text_l("Tokenizer settings"),
             ui.textbox(
@@ -169,13 +157,6 @@ async def create_model(q: Q) -> None:
             "No datasets found. Please import a dataset first, then open Create model again."
         )
 
-    # Ensure directories are displayed as normalized paths for consistency.
-    q.client["experiment/create_model/tokenizer_dir"] = os.path.normpath(
-        q.client["experiment/create_model/tokenizer_dir"] or "./tokenizer_fast"
-    )
-    q.client["experiment/create_model/model_dir"] = os.path.normpath(
-        q.client["experiment/create_model/model_dir"] or "./eva-mini131k-eva_gpt-dense-fp32"
-    )
 
 
 def start_background_command(cmd: list[str], log_path: str) -> int:
