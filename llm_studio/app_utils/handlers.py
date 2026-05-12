@@ -249,7 +249,9 @@ async def handle(q: Q) -> None:
             q.client["experiment/create_model/num_key_value_heads"] = q.args[
                 "experiment/create_model/num_key_value_heads"
             ]
-            run_base_dir = os.path.join(get_output_dir(q), model_name)
+            run_base_dir = os.path.join(
+                get_output_dir(q), f"{model_name}__create_model_work"
+            )
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
             if selected_rows.empty:
@@ -258,8 +260,8 @@ async def handle(q: Q) -> None:
             else:
                 csv_path = selected_rows.iloc[0].path
                 model_dir = os.path.join(get_output_dir(q), model_name)
-                tokenizer_dir = os.path.join(model_dir, "tokenizer")
-                tokenizer_fast_dir = os.path.join(model_dir, "tokenizer_fast")
+                tokenizer_dir = os.path.join(run_base_dir, "tokenizer")
+                tokenizer_fast_dir = os.path.join(run_base_dir, "tokenizer_fast")
                 tokenizer_cmd = [
                     "python",
                     "scripts/create_model/train_tokenizer.py",
