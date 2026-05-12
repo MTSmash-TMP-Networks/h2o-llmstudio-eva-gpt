@@ -3,10 +3,12 @@ import signal
 import subprocess
 import time
 
+import pandas as pd
 from h2o_wave import Q, ui
 
 from llm_studio.app_utils.sections.common import clean_dashboard
 from llm_studio.app_utils.utils import get_output_dir
+from llm_studio.app_utils.wave_utils import ui_table_from_df
 
 
 async def create_model(q: Q) -> None:
@@ -40,20 +42,44 @@ async def create_model(q: Q) -> None:
         dataset_value = dataset_choices[0].name
 
     model_name = q.client["experiment/create_model/model_name"] or "eva-mini131k-eva_gpt-dense-fp32"
+    models_df = _get_created_models_df(get_output_dir(q))
 
-    q.page["experiment/create_model"] = ui.form_card(
-        box="content",
-        items=[
-            ui.text_xl("Create model"),
-            ui.text(
-                "Build a tokenizer from an uploaded dataset and initialize a dense EvaGPT model."
+    items = [
+        ui.text_xl("Create model"),
+        ui.text(
+            "Build a tokenizer from an uploaded dataset and initialize a dense EvaGPT model."
+        ),
+        ui.message_bar(
+            type="info",
+            text=(
+                "This workflow configures and generates ready-to-run training commands for tokenizer and dense-model initialization."
             ),
-            ui.message_bar(
-                type="info",
-                text=(
-                    "This workflow configures and generates ready-to-run training commands for tokenizer and dense-model initialization."
+        ),
+    ]
+
+    if not models_df.empty:
+        items.extend(
+            [
+                ui.separator(),
+                ui.text_l("Created models"),
+                ui_table_from_df(
+                    q=q,
+                    df=models_df,
+                    name="experiment/create_model/models_table",
+                    sortables=["name"],
+                    filterables=["name", "path"],
+                    searchables=["name", "path"],
+                    link_col="name",
+                    height="250px",
+                    min_widths={"name": "220", "path": "500"},
                 ),
-            ),
+            ]
+        )
+
+    items.extend(
+        [
+            ui.separator(),
+            ui.text_l("Create new model"),
             ui.dropdown(
                 name="experiment/create_model/dataset_id",
                 label="Dataset",
@@ -132,7 +158,12 @@ async def create_model(q: Q) -> None:
             ui.text(
                 "Tip: Keep your scripts in the project and parametrize paths via UI values above."
             ),
-        ],
+        ]
+    )
+
+    q.page["experiment/create_model"] = ui.form_card(
+        box="content",
+        items=items,
     )
     q.client.delete_cards.add("experiment/create_model")
 
@@ -258,6 +289,20 @@ def start_background_command(cmd: list[str], log_path: str) -> int:
         start_new_session=True,
     )
     return process.pid
+
+
+def _get_created_models_df(output_dir: str) -> pd.DataFrame:
+    if not os.path.isdir(output_dir):
+        return pd.DataFrame(columns=["name", "path"])
+
+    model_rows = []
+    for entry in sorted(os.listdir(output_dir)):
+        path = os.path.join(output_dir, entry)
+        config_path = os.path.join(path, "config.json")
+        if os.path.isdir(path) and os.path.isfile(config_path):
+            model_rows.append({"name": entry, "path": path})
+
+    return pd.DataFrame(model_rows, columns=["name", "path"])
 
 
 def tail_log(log_path: str, max_lines: int = 100) -> str:
