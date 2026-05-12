@@ -20,7 +20,7 @@ class ThemeColors(TypedDict):
 class WaveTheme:
     _theme_colors: ThemeColors = {
         "primary": "#7C4DFF",
-        "background_color": "#c6e52f",
+        "background_color": "#111827",
     }
 
     states = {
@@ -257,7 +257,7 @@ def wave_utils_error_card(
                         value="Oops!",
                         caption="Something went wrong",
                         icon="Error",
-                        icon_color="#CDDD38",
+                        icon_color="#06B6D4",
                     )
                 ],
                 justify="center",
