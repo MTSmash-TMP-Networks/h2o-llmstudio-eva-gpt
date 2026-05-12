@@ -51,10 +51,24 @@ def _resolve_table_path(data_path: str) -> str:
         return str(path)
     if path.is_dir():
         candidates = sorted([*path.rglob("*.csv"), *path.rglob("*.pq"), *path.rglob("*.parquet")])
-        if len(candidates) == 1:
-            return str(candidates[0])
         if not candidates:
             raise FileNotFoundError(f"No CSV/Parquet files found in directory: {path}")
+
+        def _is_meta_file(p: Path) -> bool:
+            name = p.name.lower()
+            return name.startswith("__meta_info__") or "meta" in p.parts
+
+        preferred = [p for p in candidates if not _is_meta_file(p)]
+        if len(preferred) == 1:
+            return str(preferred[0])
+        if len(preferred) > 1:
+            train_named = [p for p in preferred if p.stem.lower() == "train"]
+            if len(train_named) == 1:
+                return str(train_named[0])
+            candidates = preferred
+
+        if len(candidates) == 1:
+            return str(candidates[0])
         raise ValueError(
             f"Expected one CSV/Parquet file in directory '{path}', found {len(candidates)}: "
             + ", ".join(str(p.relative_to(path)) for p in candidates[:20])
