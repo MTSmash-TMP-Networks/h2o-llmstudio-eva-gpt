@@ -33,6 +33,14 @@ async def create_model(q: Q) -> None:
     num_hidden_layers = _client_value("experiment/create_model/num_hidden_layers", 16)
     num_attention_heads = _client_value("experiment/create_model/num_attention_heads", 32)
     num_key_value_heads = _client_value("experiment/create_model/num_key_value_heads", 8)
+    dataset_value = q.client["experiment/create_model/dataset_id"]
+    if not dataset_value and dataset_choices:
+        dataset_value = dataset_choices[0].name
+
+    tokenizer_log_text = ""
+    tokenizer_log_path = q.client["experiment/create_model/tokenizer_log_path"]
+    if tokenizer_log_path:
+        tokenizer_log_text = tail_log(tokenizer_log_path)
 
     model_name = q.client["experiment/create_model/model_name"] or "eva-mini131k-eva_gpt-dense-fp32"
     default_model_dir = os.path.join(get_output_dir(q), model_name)
@@ -55,7 +63,7 @@ async def create_model(q: Q) -> None:
                 name="experiment/create_model/dataset_id",
                 label="Dataset",
                 choices=dataset_choices,
-                value=(dataset_choices[0].name if dataset_choices else None),
+                value=dataset_value,
                 required=False,
             ),
             ui.textbox(
@@ -121,7 +129,20 @@ async def create_model(q: Q) -> None:
                         name="experiment/create_model/start_model_init",
                         label="Start model creation",
                     ),
+                    ui.button(
+                        name="experiment/create_model/refresh_logs",
+                        label="Refresh logs",
+                    ),
                 ]
+            ),
+            ui.text_l("Tokenizer training log"),
+            ui.text(
+                f"Log file: {tokenizer_log_path}"
+                if tokenizer_log_path
+                else "Start tokenizer training to see logs here."
+            ),
+            ui.text(
+                f"```text\n{tokenizer_log_text or 'No log output yet.'}\n```"
             ),
             ui.separator(),
             ui.text_l("Run pipeline"),
@@ -167,3 +188,11 @@ def start_background_command(cmd: list[str], log_path: str) -> int:
         start_new_session=True,
     )
     return process.pid
+
+
+def tail_log(log_path: str, max_lines: int = 100) -> str:
+    if not os.path.exists(log_path):
+        return ""
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()[-max_lines:]
+    return "".join(lines).strip()
