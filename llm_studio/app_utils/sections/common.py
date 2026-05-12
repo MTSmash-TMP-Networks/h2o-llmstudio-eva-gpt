@@ -30,6 +30,7 @@ async def meta(q: Q) -> None:
     q.page["meta"] = ui.meta_card(
         box="",
         title="MaTeLiX AI Studio",
+        icon="https://matelix.ai/pic/SVG.png",
         layouts=[
             ui.layout(breakpoint="0px", width="100%", zones=zones),
             ui.layout(breakpoint="1920px", width="1920px", zones=zones),
