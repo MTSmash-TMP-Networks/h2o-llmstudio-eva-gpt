@@ -20,7 +20,7 @@ class ThemeColors(TypedDict):
 class WaveTheme:
     _theme_colors: ThemeColors = {
         "primary": "#7C4DFF",
-        "background_color": "#0B1020",
+        "background_color": "#c6e52f",
     }
 
     states = {

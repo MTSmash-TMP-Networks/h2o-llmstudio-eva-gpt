@@ -87,6 +87,29 @@ async def meta(q: Q) -> None:
                 background: linear-gradient(120deg, #7C4DFF 0%, #06B6D4 100%);
                 border: none;
             }
+
+            div[data-test="header"] {
+                border-radius: 16px;
+                overflow: hidden;
+                box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+            }
+
+            div[data-test="header"] .ms-Card {
+                background: linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(30, 41, 59, 0.92) 55%, rgba(124, 77, 255, 0.88) 100%);
+                border: 1px solid rgba(255, 255, 255, 0.14);
+                backdrop-filter: blur(6px);
+            }
+
+            div[data-test="header"] .ms-Card-title {
+                font-size: 1.25rem;
+                font-weight: 700;
+                letter-spacing: 0.02em;
+            }
+
+            div[data-test="header"] .ms-Card-subtitle {
+                opacity: 0.9;
+                font-weight: 500;
+            }
             """
         ),
         script=None,
