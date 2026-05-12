@@ -45,7 +45,7 @@ def _extract_inline_code(text: str) -> list[str]:
     return [_mask_noise(s.strip()) for s in INLINE_CODE_RE.findall(text or "") if s.strip()]
 
 
-def _resolve_table_path(data_path: str) -> str:
+def _resolve_table_path(data_path: str, dataset_name: str | None = None) -> str:
     path = Path(data_path)
     if path.is_file():
         return str(path)
@@ -59,12 +59,26 @@ def _resolve_table_path(data_path: str) -> str:
             return name.startswith("__meta_info__") or "meta" in p.parts
 
         preferred = [p for p in candidates if not _is_meta_file(p)]
+        if dataset_name:
+            target = dataset_name.lower()
+            matched = [p for p in preferred if p.name.lower() == target or p.stem.lower() == target]
+            if len(matched) == 1:
+                return str(matched[0])
+            if not matched:
+                raise ValueError(
+                    f"No dataset matched --dataset-name={dataset_name!r} in directory '{path}'. "
+                    + "Available files: "
+                    + ", ".join(str(p.relative_to(path)) for p in preferred[:20])
+                )
+            candidates = matched
+
         if len(preferred) == 1:
             return str(preferred[0])
         if len(preferred) > 1:
-            train_named = [p for p in preferred if p.stem.lower() == "train"]
-            if len(train_named) == 1:
-                return str(train_named[0])
+            for default_name in ("train", "train_full"):
+                train_named = [p for p in preferred if p.stem.lower() == default_name]
+                if len(train_named) == 1:
+                    return str(train_named[0])
             candidates = preferred
 
         if len(candidates) == 1:
@@ -129,7 +143,8 @@ def reservoir_sample(input_path: str, output_path: str, max_lines: int, seed: in
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--csv", required=True, help="Path to CSV/Parquet file or directory containing exactly one dataset file")
+    p.add_argument("--csv", required=True, help="Path to CSV/Parquet file or directory containing dataset file(s)")
+    p.add_argument("--dataset-name", default=None, help="Optional dataset filename/stem when --csv points to a directory")
     p.add_argument("--tokenizer-dir", default="./tokenizer")
     p.add_argument("--tokenizer-fast-dir", default="./tokenizer_fast")
     p.add_argument("--model-prefix", default="tokenizer")
@@ -138,7 +153,7 @@ def main() -> None:
     p.add_argument("--max-line-chars", type=int, default=4096)
     args = p.parse_args()
 
-    args.csv = _resolve_table_path(args.csv)
+    args.csv = _resolve_table_path(args.csv, args.dataset_name)
 
     train_txt = os.path.join(os.path.dirname(args.csv), "train_data_from_csv.txt")
     sampled_txt = os.path.join(os.path.dirname(args.csv), "train_data_sampled.txt")
