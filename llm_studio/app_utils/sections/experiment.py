@@ -1196,16 +1196,16 @@ async def experiment_display(q: Q) -> None:
                 ),
             ]
 
-        if checkpoints_exists:
-            buttons += [
-                ui.button(
-                    name="experiment/display/push_to_huggingface",
-                    label="Push checkpoint to huggingface",
-                    primary=False,
-                    disabled=False,
-                    tooltip=None,
-                ),
-            ]
+    if checkpoints_exists and status in {"running", "stopping", "stopped", "finished"}:
+        buttons += [
+            ui.button(
+                name="experiment/display/push_to_huggingface",
+                label="Push checkpoint to huggingface",
+                primary=False,
+                disabled=False,
+                tooltip=None,
+            ),
+        ]
 
     buttons += [ui.button(name="experiment/list/current", label="Back", primary=False)]
 
