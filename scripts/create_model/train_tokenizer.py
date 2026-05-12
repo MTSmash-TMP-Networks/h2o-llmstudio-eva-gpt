@@ -63,11 +63,10 @@ def _resolve_csv_path(csv_path: str) -> str:
 
 
 def build_training_file(csv_path: str, out_txt: str, max_line_chars: int) -> None:
-    cols = ["system", "Kontext", "Benutzer", "Assistentin"]
     header = pd.read_csv(csv_path, nrows=0)
-    missing = [c for c in cols if c not in header.columns]
-    if missing:
-        raise ValueError(f"Missing CSV columns: {missing}")
+    cols = [c for c in header.columns if str(c).strip() and not str(c).startswith("Unnamed:")]
+    if not cols:
+        raise ValueError("CSV has no usable columns")
 
     Path(out_txt).parent.mkdir(parents=True, exist_ok=True)
     with open(out_txt, "w", encoding="utf-8") as out:
