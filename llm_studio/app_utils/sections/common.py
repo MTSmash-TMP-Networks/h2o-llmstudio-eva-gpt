@@ -105,7 +105,7 @@ async def meta(q: Q) -> None:
                 font-size: 1.25rem;
                 font-weight: 700;
                 letter-spacing: 0.02em;
-                color: #FFFFFF;
+                color: #FFFFFF !important;
             }
 
             div[data-test="header"] .wave-s24.wave-w5,
@@ -116,7 +116,7 @@ async def meta(q: Q) -> None:
             div[data-test="header"] .ms-Card-subtitle {
                 opacity: 0.9;
                 font-weight: 500;
-                color: #FFFFFF;
+                color: #FFFFFF !important;
             }
             """
         ),
