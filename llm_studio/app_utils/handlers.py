@@ -1,6 +1,7 @@
 import gc
 import logging
 import os
+import shlex
 
 import torch
 from h2o_wave import Q
@@ -8,6 +9,7 @@ from h2o_wave import Q
 from llm_studio.app_utils.sections.chat import chat_tab
 from llm_studio.app_utils.sections.chat_update import chat_copy, chat_update
 from llm_studio.app_utils.sections.create_model import create_model
+from llm_studio.app_utils.sections.create_model import create_model_logs
 from llm_studio.app_utils.sections.create_model import start_background_command
 from llm_studio.app_utils.sections.common import delete_dialog
 from llm_studio.app_utils.sections.dataset import (
@@ -215,9 +217,9 @@ async def handle(q: Q) -> None:
 
         elif q.args.__wave_submission_name__ == "experiment/create_model":
             await create_model(q)
-        elif q.args.__wave_submission_name__ == "experiment/create_model/refresh_logs":
-            await create_model(q)
-        elif q.args.__wave_submission_name__ == "experiment/create_model/start_tokenizer":
+        elif q.args.__wave_submission_name__ == "experiment/create_model/logs":
+            await create_model_logs(q)
+        elif q.args.__wave_submission_name__ == "experiment/create_model/start_pipeline":
             dataset_id = q.args["experiment/create_model/dataset_id"]
             q.client["experiment/create_model/dataset_id"] = dataset_id
             model_name = (
@@ -231,17 +233,33 @@ async def handle(q: Q) -> None:
             q.client["experiment/create_model/max_lines"] = q.args[
                 "experiment/create_model/max_lines"
             ]
+            q.client["experiment/create_model/hidden_size"] = q.args[
+                "experiment/create_model/hidden_size"
+            ]
+            q.client["experiment/create_model/intermediate_size"] = q.args[
+                "experiment/create_model/intermediate_size"
+            ]
+            q.client["experiment/create_model/num_hidden_layers"] = q.args[
+                "experiment/create_model/num_hidden_layers"
+            ]
+            q.client["experiment/create_model/num_attention_heads"] = q.args[
+                "experiment/create_model/num_attention_heads"
+            ]
+            q.client["experiment/create_model/num_key_value_heads"] = q.args[
+                "experiment/create_model/num_key_value_heads"
+            ]
             run_base_dir = os.path.join(get_output_dir(q), model_name)
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
             if selected_rows.empty:
                 q.client["notification_bar"] = "Please select a dataset first."
+                await create_model(q)
             else:
                 csv_path = selected_rows.iloc[0].path
                 model_dir = os.path.join(get_output_dir(q), model_name)
                 tokenizer_dir = os.path.join(model_dir, "tokenizer")
                 tokenizer_fast_dir = os.path.join(model_dir, "tokenizer_fast")
-                cmd = [
+                tokenizer_cmd = [
                     "python",
                     "scripts/create_model/train_tokenizer.py",
                     "--csv",
@@ -255,47 +273,42 @@ async def handle(q: Q) -> None:
                     "--max-lines",
                     str(q.args["experiment/create_model/max_lines"] or 500000),
                 ]
-                log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
-                pid = start_background_command(cmd, log_path=log_path)
-                q.client["experiment/create_model/tokenizer_log_path"] = log_path
+                tokenizer_log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
+                q.client["experiment/create_model/tokenizer_log_path"] = tokenizer_log_path
+
+                model_cmd = [
+                    "python",
+                    "scripts/create_model/initialize_eva_model.py",
+                    "--tokenizer-src",
+                    tokenizer_fast_dir,
+                    "--out-dir",
+                    model_dir,
+                    "--hidden-size",
+                    str(q.args["experiment/create_model/hidden_size"] or 2048),
+                    "--intermediate-size",
+                    str(q.args["experiment/create_model/intermediate_size"] or 8192),
+                    "--num-hidden-layers",
+                    str(q.args["experiment/create_model/num_hidden_layers"] or 16),
+                    "--num-attention-heads",
+                    str(q.args["experiment/create_model/num_attention_heads"] or 32),
+                    "--num-key-value-heads",
+                    str(q.args["experiment/create_model/num_key_value_heads"] or 8),
+                ]
+                model_log_path = os.path.join(run_base_dir, "create_model_init.log")
+                pipeline_cmd = [
+                    "bash",
+                    "-lc",
+                    (
+                        f"{shlex.join(tokenizer_cmd)} > {shlex.quote(tokenizer_log_path)} 2>&1"
+                        f" && {shlex.join(model_cmd)}"
+                    ),
+                ]
+                pipeline_pid = start_background_command(pipeline_cmd, log_path=model_log_path)
+                q.client["experiment/create_model/model_log_path"] = model_log_path
                 q.client["notification_bar"] = (
-                    f"Tokenizer training started (PID {pid}). Log: {log_path}"
+                    f"Create model pipeline started (PID {pipeline_pid})."
                 )
-            await create_model(q)
-        elif q.args.__wave_submission_name__ == "experiment/create_model/start_model_init":
-            model_name = (
-                q.args["experiment/create_model/model_name"]
-                or "eva-mini131k-eva_gpt-dense-fp32"
-            )
-            run_base_dir = os.path.join(get_output_dir(q), model_name)
-            cmd = [
-                "python",
-                "scripts/create_model/initialize_eva_model.py",
-                "--tokenizer-src",
-                str(
-                    os.path.join(get_output_dir(q), model_name, "tokenizer_fast")
-                ),
-                "--out-dir",
-                str(
-                    os.path.join(get_output_dir(q), model_name)
-                ),
-                "--hidden-size",
-                str(q.args["experiment/create_model/hidden_size"] or 2048),
-                "--intermediate-size",
-                str(q.args["experiment/create_model/intermediate_size"] or 8192),
-                "--num-hidden-layers",
-                str(q.args["experiment/create_model/num_hidden_layers"] or 16),
-                "--num-attention-heads",
-                str(q.args["experiment/create_model/num_attention_heads"] or 32),
-                "--num-key-value-heads",
-                str(q.args["experiment/create_model/num_key_value_heads"] or 8),
-            ]
-            log_path = os.path.join(run_base_dir, "create_model_init.log")
-            pid = start_background_command(cmd, log_path=log_path)
-            q.client["notification_bar"] = (
-                f"Model creation started (PID {pid}). Log: {log_path}"
-            )
-            await create_model(q)
+                await create_model_logs(q)
 
         elif (
             q.args.__wave_submission_name__ == "experiment/start"
