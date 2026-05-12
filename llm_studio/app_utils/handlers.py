@@ -311,9 +311,9 @@ async def handle(q: Q) -> None:
                 q.client["experiment/create_model/pipeline_pid"] = pipeline_pid
                 q.client["experiment/create_model/pipeline_started_at"] = time.time()
                 q.client["notification_bar"] = (
-                    f"Create model pipeline started (PID {pipeline_pid}). Logs refresh automatically until completion."
+                    f"Create model pipeline started (PID {pipeline_pid}). Open logs to refresh manually."
                 )
-                await create_model_logs(q, follow=True)
+                await create_model_logs(q)
 
         elif (
             q.args.__wave_submission_name__ == "experiment/start"
