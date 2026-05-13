@@ -10,6 +10,8 @@ from h2o_wave import Q
 from llm_studio.app_utils.sections.chat import chat_tab
 from llm_studio.app_utils.sections.chat_update import chat_copy, chat_update
 from llm_studio.app_utils.sections.create_model import create_model
+from llm_studio.app_utils.sections.create_model import delete_created_model
+from llm_studio.app_utils.sections.create_model import _get_created_models_df
 from llm_studio.app_utils.sections.create_model import create_model_logs
 from llm_studio.app_utils.sections.create_model import start_background_command
 from llm_studio.app_utils.sections.common import delete_dialog
@@ -228,6 +230,21 @@ async def handle(q: Q) -> None:
             await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/logs":
             await create_model_logs(q)
+        elif (
+            q.args.__wave_submission_name__
+            == "experiment/create_model/delete_model"
+        ):
+            selected_idx = int(q.args["experiment/create_model/delete_model"])
+            models_df = _get_created_models_df(get_output_dir(q))
+            if selected_idx < 0 or selected_idx >= len(models_df):
+                q.client["notification_bar"] = "Selected model could not be deleted."
+            else:
+                model_path = str(models_df.iloc[selected_idx]["path"])
+                if delete_created_model(model_path):
+                    q.client["notification_bar"] = "Model deleted."
+                else:
+                    q.client["notification_bar"] = "Selected model could not be deleted."
+            await create_model(q)
         elif (
             q.args.__wave_submission_name__
             == "experiment/create_model/create_experiment"
