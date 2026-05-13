@@ -63,14 +63,13 @@ async def home(q: Q) -> None:
 
     stats = []
     if torch.cuda.is_available():
-        stats.append(ui.stat(label="Current GPU load", value=f"{get_gpu_usage():.1f}%", color=wave_theme.get_primary_color(q)))
+        stats.append(ui.stat(label="Current GPU load", value=f"{get_gpu_usage():.1f}%"))
     stats += [
-        ui.stat(label="Current CPU load", value=f"{psutil.cpu_percent()}%", color=wave_theme.get_primary_color(q)),
+        ui.stat(label="Current CPU load", value=f"{psutil.cpu_percent()}%"),
         ui.stat(
             label="Memory usage",
             value=f"{get_size_str(psutil.virtual_memory().used, sig_figs=1)} /\
-                    {get_size_str(psutil.virtual_memory().total, sig_figs=1)}",
-            color=wave_theme.get_primary_color(q),
+                    {get_size_str(psutil.virtual_memory().total, sig_figs=1)}"
         ),
     ]
 
