@@ -67,7 +67,6 @@ function patchMatelixWaveThemeColors() {
   });
 
   // Override generated Wave / Fluent pill classes like .pill-303.
-  // These should use the MaTeLiX light blue accent, not the gray fallback.
   document.querySelectorAll(
     '[class^="pill-"], [class*=" pill-"]'
   ).forEach((el) => {
@@ -76,11 +75,18 @@ function patchMatelixWaveThemeColors() {
     el.style.setProperty("border-color", blueTarget, "important");
   });
 
-  // Override slider thumbs created by Fluent/Wave.
+  // Override slider thumbs and active tracks created by Fluent/Wave.
   document.querySelectorAll(
     '.ms-Slider-thumb'
   ).forEach((el) => {
     el.style.setProperty("border-color", blueTarget, "important");
+  });
+
+  document.querySelectorAll(
+    '.ms-Slider-active'
+  ).forEach((el) => {
+    el.style.setProperty("background", blueTarget, "important");
+    el.style.setProperty("background-color", blueTarget, "important");
   });
 
   // Fallback: catch inline styles created after Wave rendering.
@@ -109,6 +115,7 @@ function patchMatelixWaveThemeColors() {
       el.style.setProperty("fill", target, "important");
       el.style.setProperty("stroke", target, "important");
       el.style.setProperty("border-color", blueTarget, "important");
+      el.style.setProperty("background-color", blueTarget, "important");
       el.style.setProperty("text-decoration-color", target, "important");
     }
   });
@@ -356,12 +363,20 @@ async def meta(q: Q) -> None:
                 border-color: #38BDF8 !important;
             }
 
-            /* Override Wave-generated slider classes like .slideBox-389:hover .ms-Slider-thumb */
+            /* Override Wave-generated slider classes like .slideBox-389:hover */
             [class^="slideBox-"] .ms-Slider-thumb,
             [class*=" slideBox-"] .ms-Slider-thumb,
             [class^="slideBox-"]:hover .ms-Slider-thumb,
             [class*=" slideBox-"]:hover .ms-Slider-thumb {
                 border-color: #38BDF8 !important;
+            }
+
+            [class^="slideBox-"] .ms-Slider-active,
+            [class*=" slideBox-"] .ms-Slider-active,
+            [class^="slideBox-"]:hover .ms-Slider-active,
+            [class*=" slideBox-"]:hover .ms-Slider-active {
+                background: #38BDF8 !important;
+                background-color: #38BDF8 !important;
             }
 
             /* Fallback for inline yellow values coming from Wave internals */
@@ -383,6 +398,7 @@ async def meta(q: Q) -> None:
               fill: #E2E8F0 !important;
               stroke: #E2E8F0 !important;
               border-color: #38BDF8 !important;
+              background-color: #38BDF8 !important;
               text-decoration-color: #E2E8F0 !important;
             }
             """
