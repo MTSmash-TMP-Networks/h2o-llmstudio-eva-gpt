@@ -129,17 +129,21 @@ async def meta(q: Q) -> None:
                 fill: #FFFFFF !important;
             }
 
-            /* Override residual Wave yellow accents from template */
-            .link-235,
-            .link-232,
-            .root-265,
-            .fsk4fx2,
+            /* Override residual Wave yellow accents regardless of dynamic class suffixes */
+            [class^="link-"],
+            [class*=" link-"],
+            [class^="root-"],
+            [class*=" root-"],
+            [class^="fsk"],
+            [class*=" fsk"],
             [style*="rgb(254, 201, 37)"],
-            [style*="rgb(254,201,37)"] {
+            [style*="rgb(254,201,37)"],
+            [style*="rgb(254 201 37)"] {
                 color: #7C4DFF !important;
                 fill: #7C4DFF !important;
+                stroke: #7C4DFF !important;
                 border-color: #7C4DFF !important;
-                background-color: rgba(124, 77, 255, 0.12) !important;
+                text-decoration-color: #7C4DFF !important;
             }
             """
         ),
