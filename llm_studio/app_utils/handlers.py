@@ -248,6 +248,12 @@ async def handle(q: Q) -> None:
             q.client["experiment/create_model/max_lines"] = q.args[
                 "experiment/create_model/max_lines"
             ]
+            q.client["experiment/create_model/use_pretrained_tokenizer"] = bool(
+                q.args["experiment/create_model/use_pretrained_tokenizer"]
+            )
+            q.client["experiment/create_model/pretrained_tokenizer_model"] = (
+                q.args["experiment/create_model/pretrained_tokenizer_model"] or ""
+            )
             q.client["experiment/create_model/hidden_size"] = q.args[
                 "experiment/create_model/hidden_size"
             ]
@@ -276,6 +282,22 @@ async def handle(q: Q) -> None:
                 model_dir = os.path.join(get_output_dir(q), model_name)
                 tokenizer_dir = os.path.join(run_base_dir, "tokenizer")
                 tokenizer_fast_dir = os.path.join(run_base_dir, "tokenizer_fast")
+                use_pretrained_tokenizer = bool(
+                    q.args["experiment/create_model/use_pretrained_tokenizer"]
+                )
+                pretrained_tokenizer_model = (
+                    q.args["experiment/create_model/pretrained_tokenizer_model"] or ""
+                ).strip()
+                if use_pretrained_tokenizer and not pretrained_tokenizer_model:
+                    q.client["notification_bar"] = (
+                        "Please provide a Hugging Face model id for pretrained tokenizer."
+                    )
+                    await create_model(q)
+                    return
+
+                tokenizer_log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
+                q.client["experiment/create_model/tokenizer_log_path"] = tokenizer_log_path
+                tokenizer_src = pretrained_tokenizer_model if use_pretrained_tokenizer else tokenizer_fast_dir
                 tokenizer_cmd = [
                     "python",
                     "scripts/create_model/train_tokenizer.py",
@@ -290,14 +312,12 @@ async def handle(q: Q) -> None:
                     "--max-lines",
                     str(q.args["experiment/create_model/max_lines"] or 500000),
                 ]
-                tokenizer_log_path = os.path.join(run_base_dir, "create_model_tokenizer.log")
-                q.client["experiment/create_model/tokenizer_log_path"] = tokenizer_log_path
 
                 model_cmd = [
                     "python",
                     "scripts/create_model/initialize_eva_model.py",
                     "--tokenizer-src",
-                    tokenizer_fast_dir,
+                    tokenizer_src,
                     "--out-dir",
                     model_dir,
                     "--hidden-size",
@@ -312,15 +332,18 @@ async def handle(q: Q) -> None:
                     str(q.args["experiment/create_model/num_key_value_heads"] or 8),
                 ]
                 model_log_path = os.path.join(run_base_dir, "create_model_init.log")
-                pipeline_cmd = [
-                    "bash",
-                    "-lc",
-                    (
+                pipeline_steps = []
+                if use_pretrained_tokenizer:
+                    pipeline_steps.append(
+                        f"echo 'Using pretrained tokenizer: {shlex.quote(tokenizer_src)}' > {shlex.quote(tokenizer_log_path)}"
+                    )
+                else:
+                    pipeline_steps.append(
                         f"{shlex.join(tokenizer_cmd)} > {shlex.quote(tokenizer_log_path)} 2>&1"
-                        f" && {shlex.join(model_cmd)}"
-                        f" && rm -rf {shlex.quote(run_base_dir)}"
-                    ),
-                ]
+                    )
+                pipeline_steps.append(shlex.join(model_cmd))
+                pipeline_steps.append(f"rm -rf {shlex.quote(run_base_dir)}")
+                pipeline_cmd = ["bash", "-lc", " && ".join(pipeline_steps)]
                 pipeline_pid = start_background_command(pipeline_cmd, log_path=model_log_path)
                 q.client["experiment/create_model/model_log_path"] = model_log_path
                 q.client["experiment/create_model/pipeline_pid"] = pipeline_pid

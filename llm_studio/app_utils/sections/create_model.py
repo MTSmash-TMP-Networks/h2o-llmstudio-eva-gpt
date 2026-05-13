@@ -31,6 +31,12 @@ async def create_model(q: Q) -> None:
         return str(value or default)
 
     vocab_size = _client_value("experiment/create_model/vocab_size", 128256)
+    use_pretrained_tokenizer = bool(
+        q.client["experiment/create_model/use_pretrained_tokenizer"]
+    )
+    pretrained_tokenizer_model = (
+        q.client["experiment/create_model/pretrained_tokenizer_model"] or ""
+    )
     max_lines = _client_value("experiment/create_model/max_lines", 500000)
     hidden_size = _client_value("experiment/create_model/hidden_size", 2048)
     intermediate_size = _client_value("experiment/create_model/intermediate_size", 8192)
@@ -116,15 +122,32 @@ async def create_model(q: Q) -> None:
                 value=model_name,
             ),
             ui.text_l("Tokenizer settings"),
+            ui.toggle(
+                name="experiment/create_model/use_pretrained_tokenizer",
+                label="Use pretrained Hugging Face tokenizer",
+                value=use_pretrained_tokenizer,
+                trigger=True,
+            ),
+            ui.textbox(
+                name="experiment/create_model/pretrained_tokenizer_model",
+                label="Hugging Face tokenizer model",
+                value=pretrained_tokenizer_model,
+                placeholder="z.B. meta-llama/Llama-3.2-1B",
+                required=use_pretrained_tokenizer,
+            )
+            if use_pretrained_tokenizer
+            else ui.text(""),
             ui.textbox(
                 name="experiment/create_model/vocab_size",
                 label="Token count (vocab size)",
                 value=vocab_size,
+                disabled=use_pretrained_tokenizer,
             ),
             ui.textbox(
                 name="experiment/create_model/max_lines",
                 label="Max sampled lines",
                 value=max_lines,
+                disabled=use_pretrained_tokenizer,
             ),
             ui.text_l("Model architecture settings"),
             ui.textbox(
@@ -167,10 +190,10 @@ async def create_model(q: Q) -> None:
             ),
             ui.separator(),
             ui.text_l("Run pipeline"),
-            ui.text("1) Train tokenizer:"),
+            ui.text("1) Train tokenizer (or use pretrained Hugging Face tokenizer):"),
             ui.text("python scripts/create_model/train_tokenizer.py --csv <path-to-dataset.csv> --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
             ui.text("2) Initialize dense EvaGPT model:"),
-            ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
+            ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast|<hf-model-id> --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
             ui.separator(),
             ui.text_l("Next steps"),
             ui.text(
