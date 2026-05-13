@@ -129,13 +129,21 @@ async def meta(q: Q) -> None:
                 fill: #FFFFFF !important;
             }
 
-            /* Override residual Wave yellow accents regardless of dynamic class suffixes */
-            [class^="link-"],
-            [class*=" link-"],
-            [class^="root-"],
-            [class*=" root-"],
-            [class^="fsk"],
-            [class*=" fsk"],
+            /* Enforce MaTeLiX accent colors via theme tokens (instead of volatile class names) */
+            :root {
+                --themePrimary: #7C4DFF;
+                --themeLighterAlt: #F5F3FF;
+                --themeLighter: #EDE9FE;
+                --themeLight: #DDD6FE;
+                --themeTertiary: #A78BFA;
+                --themeSecondary: #8B5CF6;
+                --themeDarkAlt: #6D28D9;
+                --themeDark: #5B21B6;
+                --themeDarker: #4C1D95;
+                --paletteYellow: #7C4DFF;
+            }
+
+            /* Fallback for inline yellow values coming from Wave internals */
             [style*="rgb(254, 201, 37)"],
             [style*="rgb(254,201,37)"],
             [style*="rgb(254 201 37)"] {
