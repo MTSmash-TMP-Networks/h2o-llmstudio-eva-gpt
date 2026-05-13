@@ -314,6 +314,18 @@ async def meta(q: Q) -> None:
                 border-bottom-color: #38BDF8 !important;
             }
 
+            /* Override Wave-generated dropdown focus rings like .dropdown-273:focus::after */
+            [class^="dropdown-"]:focus::before,
+            [class*=" dropdown-"]:focus::before,
+            [class^="dropdown-"]:focus::after,
+            [class*=" dropdown-"]:focus::after,
+            [class^="dropdown-"]:focus-within::before,
+            [class*=" dropdown-"]:focus-within::before,
+            [class^="dropdown-"]:focus-within::after,
+            [class*=" dropdown-"]:focus-within::after {
+                border-color: #38BDF8 !important;
+            }
+
             /* Override Wave-generated toggle/pill classes like .pill-303 */
             [class^="pill-"],
             [class*=" pill-"] {
