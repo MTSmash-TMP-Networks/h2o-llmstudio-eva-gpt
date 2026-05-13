@@ -27,12 +27,33 @@ setup: uv  # Install dependencies
 	$(UV) sync --frozen --no-dev
 	-$(UV) sync --frozen --no-dev --extra flash
 	$(UV) pip install --python .venv/bin/python --upgrade --reinstall-package transformers --refresh-package transformers --no-cache "transformers @ git+https://github.com/MTSmash-TMP-Networks/transformers-eva-gpt.git@eva-gpt"
+	$(MAKE) patch-wave-theme
 
 .PHONY: setup-dev
 setup-dev: uv  # Install dependencies including dev dependencies
 	$(UV) sync --frozen --group dev
 	-$(UV) sync --frozen --group dev --extra flash
 	$(UV) run playwright install
+	$(MAKE) patch-wave-theme
+
+.PHONY: patch-wave-theme
+patch-wave-theme:
+	@echo "Patching H2O Wave h2o-dark theme colors..."
+	@if [ -d ".venv/www/wave-static" ]; then \
+		find .venv/www/wave-static -name "index-*.js" -type f -exec perl -pi -e '\
+			s/#fec925/#38BDF8/g; \
+			s/#ffcf40/#38BDF8/g; \
+			s/#ffde7d/#7DD3FC/g; \
+			s/#e6b522/#0EA5E9/g; \
+			s/#c2991d/#0284C7/g; \
+			s/#8f7015/#0369A1/g; \
+			s/rgb\(254,\s*201,\s*37\)/rgb(56, 189, 248)/g; \
+			s/rgb\(194,\s*153,\s*29\)/rgb(56, 189, 248)/g; \
+		' {} \; ; \
+		echo "Wave theme patch applied."; \
+	else \
+		echo "Wave static directory not found, skipping patch."; \
+	fi
 
 .PHONY: requirements
 requirements: uv  # uv pip compile requirements.txt
@@ -147,7 +168,7 @@ test-ui-github-actions: reports setup-dev
 	@echo "Server stopped."
 
 .PHONY: wave
-wave:
+wave: patch-wave-theme
 	HF_HUB_DISABLE_TELEMETRY=1 \
 	H2O_WAVE_APP_ACCESS_KEY_ID=dev \
 	H2O_WAVE_APP_ACCESS_KEY_SECRET=dev \
@@ -158,7 +179,7 @@ wave:
 	$(UV) run wave run llm_studio.app
 
 .PHONY: llmstudio
-llmstudio:
+llmstudio: patch-wave-theme
 	nvidia-smi && \
 	HF_HUB_DISABLE_TELEMETRY=1 \
 	H2O_WAVE_MAX_REQUEST_SIZE=25MB \
