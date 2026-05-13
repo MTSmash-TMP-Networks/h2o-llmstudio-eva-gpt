@@ -1,4 +1,5 @@
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -100,7 +101,8 @@ async def create_model(q: Q) -> None:
                     searchables=["name", "path"],
                     link_col="name",
                     height="250px",
-                    min_widths={"name": "220", "path": "500"},
+                    min_widths={"name": "220", "path": "500", "actions": "80"},
+                    actions={"experiment/create_model/delete_model": "Delete"},
                 ),
             ]
         )
@@ -353,6 +355,15 @@ def _get_created_models_df(output_dir: str) -> pd.DataFrame:
             model_rows.append({"name": entry, "path": path})
 
     return pd.DataFrame(model_rows, columns=["name", "path"])
+
+
+def delete_created_model(model_path: str) -> bool:
+    config_path = os.path.join(model_path, "config.json")
+    if not os.path.isdir(model_path) or not os.path.isfile(config_path):
+        return False
+
+    shutil.rmtree(model_path, ignore_errors=False)
+    return True
 
 
 def tail_log(log_path: str, max_lines: int = 100) -> str:
