@@ -113,7 +113,8 @@ async def meta(q: Q) -> None:
                 color: #FFFFFF !important;
             }
 
-            div[data-test="header"] .ms-Card-subtitle {
+            div[data-test="header"] .ms-Card-subtitle,
+            div[data-test="header"] .ms-Card-subtitle * {
                 opacity: 0.9;
                 font-weight: 500;
                 color: #FFFFFF !important;
