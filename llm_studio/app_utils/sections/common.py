@@ -84,7 +84,7 @@ async def meta(q: Q) -> None:
             }
 
             div[data-test] .ms-Button--primary {
-                background: linear-gradient(120deg, #7C4DFF 0%, #06B6D4 100%);
+                background: linear-gradient(120deg, #38BDF8 0%, #0EA5E9 100%);
                 border: none;
             }
 
@@ -127,6 +127,31 @@ async def meta(q: Q) -> None:
                 font-weight: 500;
                 color: #FFFFFF !important;
                 fill: #FFFFFF !important;
+            }
+
+            /* Enforce MaTeLiX accent colors via theme tokens (instead of volatile class names) */
+            :root {
+                --themePrimary: #38BDF8;
+                --themeLighterAlt: #F5F3FF;
+                --themeLighter: #EDE9FE;
+                --themeLight: #DDD6FE;
+                --themeTertiary: #7DD3FC;
+                --themeSecondary: #38BDF8;
+                --themeDarkAlt: #0284C7;
+                --themeDark: #0369A1;
+                --themeDarker: #0C4A6E;
+                --paletteYellow: #E2E8F0;
+            }
+
+            /* Fallback for inline yellow values coming from Wave internals */
+            [style*="rgb(254, 201, 37)"],
+            [style*="rgb(254,201,37)"],
+            [style*="rgb(254 201 37)"] {
+                color: #E2E8F0 !important;
+                fill: #E2E8F0 !important;
+                stroke: #E2E8F0 !important;
+                border-color: #E2E8F0 !important;
+                text-decoration-color: #E2E8F0 !important;
             }
             """
         ),
