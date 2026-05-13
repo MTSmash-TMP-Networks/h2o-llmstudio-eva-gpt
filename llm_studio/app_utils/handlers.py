@@ -280,19 +280,19 @@ async def handle(q: Q) -> None:
             run_base_dir = os.path.join(
                 get_output_dir(q), f"{model_name}__create_model_work"
             )
+            use_pretrained_tokenizer = bool(
+                q.args["experiment/create_model/use_pretrained_tokenizer"]
+            )
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
-            if selected_rows.empty:
+            if not use_pretrained_tokenizer and selected_rows.empty:
                 q.client["notification_bar"] = "Please select a dataset first."
                 await create_model(q)
             else:
-                csv_path = selected_rows.iloc[0].path
+                csv_path = selected_rows.iloc[0].path if not selected_rows.empty else ""
                 model_dir = os.path.join(get_output_dir(q), model_name)
                 tokenizer_dir = os.path.join(run_base_dir, "tokenizer")
                 tokenizer_fast_dir = os.path.join(run_base_dir, "tokenizer_fast")
-                use_pretrained_tokenizer = bool(
-                    q.args["experiment/create_model/use_pretrained_tokenizer"]
-                )
                 pretrained_tokenizer_model = (
                     q.args["experiment/create_model/pretrained_tokenizer_model"] or ""
                 ).strip()
