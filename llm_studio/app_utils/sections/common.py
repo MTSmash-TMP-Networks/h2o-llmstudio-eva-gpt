@@ -355,6 +355,22 @@ async def meta(q: Q) -> None:
                 border-color: #38BDF8 !important;
             }
 
+            /* Override Wave-generated field focus rings like .fieldGroup-369::after */
+            [class^="fieldGroup-"]::before,
+            [class*=" fieldGroup-"]::before,
+            [class^="fieldGroup-"]::after,
+            [class*=" fieldGroup-"]::after,
+            [class^="fieldGroup-"]:focus::before,
+            [class*=" fieldGroup-"]:focus::before,
+            [class^="fieldGroup-"]:focus::after,
+            [class*=" fieldGroup-"]:focus::after,
+            [class^="fieldGroup-"]:focus-within::before,
+            [class*=" fieldGroup-"]:focus-within::before,
+            [class^="fieldGroup-"]:focus-within::after,
+            [class*=" fieldGroup-"]:focus-within::after {
+                border-color: #38BDF8 !important;
+            }
+
             /* Override Wave-generated toggle/pill classes like .pill-303 */
             [class^="pill-"],
             [class*=" pill-"] {
@@ -456,7 +472,7 @@ async def interface(q: Q) -> None:
             box="header",
             title=default_cfg.name,
             image=q.app["icon_path"],
-            subtitle="v14.4.MaTeLiX-DEV",
+            subtitle="v14.5.MaTeLiX-DEV",
         )
 
         if q.app.heap_mode:
