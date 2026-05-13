@@ -66,12 +66,6 @@ async def create_model(q: Q) -> None:
         ui.text(
             "Build a tokenizer from an uploaded dataset and initialize a dense EvaGPT model."
         ),
-        ui.message_bar(
-            type="info",
-            text=(
-                "This workflow configures and generates ready-to-run training commands for tokenizer and dense-model initialization."
-            ),
-        ),
     ]
 
     if not models_df.empty:
