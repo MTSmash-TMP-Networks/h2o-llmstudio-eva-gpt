@@ -218,6 +218,14 @@ async def handle(q: Q) -> None:
 
         elif q.args.__wave_submission_name__ == "experiment/create_model":
             await create_model(q)
+        elif (
+            q.args.__wave_submission_name__
+            == "experiment/create_model/use_pretrained_tokenizer"
+        ):
+            q.client["experiment/create_model/use_pretrained_tokenizer"] = bool(
+                q.args["experiment/create_model/use_pretrained_tokenizer"]
+            )
+            await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/logs":
             await create_model_logs(q)
         elif (
