@@ -89,6 +89,7 @@ async def meta(q: Q) -> None:
             }
 
             div[data-test="header"] {
+                --wave-text: #FFFFFF;
                 border-radius: 16px;
                 overflow: hidden;
                 box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
