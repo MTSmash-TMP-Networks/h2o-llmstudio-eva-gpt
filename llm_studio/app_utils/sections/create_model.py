@@ -115,7 +115,9 @@ async def create_model(q: Q) -> None:
                 choices=dataset_choices,
                 value=dataset_value,
                 required=False,
-            ),
+            )
+            if not use_pretrained_tokenizer
+            else ui.text(""),
             ui.textbox(
                 name="experiment/create_model/model_name",
                 label="Model name",
@@ -142,7 +144,9 @@ async def create_model(q: Q) -> None:
                 label="Token count (vocab size)",
                 value=vocab_size,
                 disabled=use_pretrained_tokenizer,
-            ),
+            )
+            if not use_pretrained_tokenizer
+            else ui.text(""),
             ui.textbox(
                 name="experiment/create_model/max_lines",
                 label="Max sampled lines",
