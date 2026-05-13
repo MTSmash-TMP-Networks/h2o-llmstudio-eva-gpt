@@ -46,7 +46,7 @@ async def home(q: Q) -> None:
             items=[
                 ui.visualization(
                     plot=ui.plot(
-                        [ui.mark(type="interval", x="=status", y="=count", y_min=0)]
+                        [ui.mark(type="interval", x="=status", y="=count", y_min=0, color=wave_theme.get_primary_color(q))]
                     ),
                     data=data(
                         fields="status count",

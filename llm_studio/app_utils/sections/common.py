@@ -128,6 +128,31 @@ async def meta(q: Q) -> None:
                 color: #FFFFFF !important;
                 fill: #FFFFFF !important;
             }
+
+            /* Enforce MaTeLiX accent colors via theme tokens (instead of volatile class names) */
+            :root {
+                --themePrimary: #7C4DFF;
+                --themeLighterAlt: #F5F3FF;
+                --themeLighter: #EDE9FE;
+                --themeLight: #DDD6FE;
+                --themeTertiary: #A78BFA;
+                --themeSecondary: #8B5CF6;
+                --themeDarkAlt: #6D28D9;
+                --themeDark: #5B21B6;
+                --themeDarker: #4C1D95;
+                --paletteYellow: #7C4DFF;
+            }
+
+            /* Fallback for inline yellow values coming from Wave internals */
+            [style*="rgb(254, 201, 37)"],
+            [style*="rgb(254,201,37)"],
+            [style*="rgb(254 201 37)"] {
+                color: #7C4DFF !important;
+                fill: #7C4DFF !important;
+                stroke: #7C4DFF !important;
+                border-color: #7C4DFF !important;
+                text-decoration-color: #7C4DFF !important;
+            }
             """
         ),
         script=None,
