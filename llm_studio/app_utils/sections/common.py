@@ -114,10 +114,13 @@ async def meta(q: Q) -> None:
             }
 
             div[data-test="header"] .ms-Card-subtitle,
-            div[data-test="header"] .ms-Card-subtitle * {
-                opacity: 0.9;
+            div[data-test="header"] .ms-Card-subtitle *,
+            div[data-test="header"] [class*="subtitle"],
+            div[data-test="header"] [class*="Subtitle"] {
+                opacity: 0.95;
                 font-weight: 500;
                 color: #FFFFFF !important;
+                fill: #FFFFFF !important;
             }
             """
         ),
@@ -172,7 +175,7 @@ async def interface(q: Q) -> None:
             box="header",
             title=default_cfg.name,
             image=q.app["icon_path"],
-            subtitle="v14.4.MaTeLiX-DEV",
+            subtitle="<span style='color:#FFFFFF'>v14.4.MaTeLiX-DEV</span>",
         )
 
         if q.app.heap_mode:
