@@ -76,6 +76,13 @@ function patchMatelixWaveThemeColors() {
     el.style.setProperty("border-color", blueTarget, "important");
   });
 
+  // Override slider thumbs created by Fluent/Wave.
+  document.querySelectorAll(
+    '.ms-Slider-thumb'
+  ).forEach((el) => {
+    el.style.setProperty("border-color", blueTarget, "important");
+  });
+
   // Fallback: catch inline styles created after Wave rendering.
   document.querySelectorAll("*").forEach((el) => {
     const style = el.getAttribute("style") || "";
@@ -85,18 +92,23 @@ function patchMatelixWaveThemeColors() {
       style.includes("rgb(254, 201, 37)") ||
       style.includes("rgb(254,201,37)") ||
       style.includes("rgb(254 201 37)") ||
+      style.includes("rgb(194, 153, 29)") ||
+      style.includes("rgb(194,153,29)") ||
+      style.includes("rgb(194 153 29)") ||
       styleLower.includes("#fec925") ||
       styleLower.includes("fec925") ||
       styleLower.includes("#ffcf40") ||
       styleLower.includes("ffcf40") ||
       styleLower.includes("#ffde7d") ||
-      styleLower.includes("ffde7d");
+      styleLower.includes("ffde7d") ||
+      styleLower.includes("#c2991d") ||
+      styleLower.includes("c2991d");
 
     if (hasWaveYellow) {
       el.style.setProperty("color", target, "important");
       el.style.setProperty("fill", target, "important");
       el.style.setProperty("stroke", target, "important");
-      el.style.setProperty("border-color", target, "important");
+      el.style.setProperty("border-color", blueTarget, "important");
       el.style.setProperty("text-decoration-color", target, "important");
     }
   });
@@ -344,20 +356,33 @@ async def meta(q: Q) -> None:
                 border-color: #38BDF8 !important;
             }
 
+            /* Override Wave-generated slider classes like .slideBox-389:hover .ms-Slider-thumb */
+            [class^="slideBox-"] .ms-Slider-thumb,
+            [class*=" slideBox-"] .ms-Slider-thumb,
+            [class^="slideBox-"]:hover .ms-Slider-thumb,
+            [class*=" slideBox-"]:hover .ms-Slider-thumb {
+                border-color: #38BDF8 !important;
+            }
+
             /* Fallback for inline yellow values coming from Wave internals */
             [style*="254, 201, 37"],
             [style*="254,201,37"],
             [style*="254 201 37"],
+            [style*="194, 153, 29"],
+            [style*="194,153,29"],
+            [style*="194 153 29"],
             [style*="FEC925"],
             [style*="fec925"],
             [style*="ffcf40"],
             [style*="FFCF40"],
             [style*="ffde7d"],
-            [style*="FFDE7D"] {
+            [style*="FFDE7D"],
+            [style*="c2991d"],
+            [style*="C2991D"] {
               color: #E2E8F0 !important;
               fill: #E2E8F0 !important;
               stroke: #E2E8F0 !important;
-              border-color: #E2E8F0 !important;
+              border-color: #38BDF8 !important;
               text-decoration-color: #E2E8F0 !important;
             }
             """
