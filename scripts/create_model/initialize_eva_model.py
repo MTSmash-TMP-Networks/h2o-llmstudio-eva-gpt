@@ -17,6 +17,7 @@ def main() -> None:
     p.add_argument("--num-hidden-layers", type=int, default=16)
     p.add_argument("--num-attention-heads", type=int, default=32)
     p.add_argument("--num-key-value-heads", type=int, default=8)
+    p.add_argument("--attn-implementation", choices=["eager", "sdpa"], default="eager")
     args = p.parse_args()
 
     if os.path.isdir(args.out_dir):
@@ -58,9 +59,9 @@ def main() -> None:
     cfg.output_router_logits = False
     cfg.tie_word_embeddings = True
     cfg.use_cache = False
-    cfg._attn_implementation = "sdpa"
+    cfg._attn_implementation = args.attn_implementation
 
-    model = AutoModelForCausalLM.from_config(cfg)
+    model = AutoModelForCausalLM.from_config(cfg, attn_implementation=args.attn_implementation)
     model.to(dtype=torch.float32, device="cpu")
     model.save_pretrained(args.out_dir, safe_serialization=True, max_shard_size="100GB")
     cfg.save_pretrained(args.out_dir)
