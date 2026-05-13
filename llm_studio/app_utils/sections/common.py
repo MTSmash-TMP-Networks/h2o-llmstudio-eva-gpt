@@ -128,6 +128,23 @@ async def meta(q: Q) -> None:
                 color: #FFFFFF !important;
                 fill: #FFFFFF !important;
             }
+
+            /* Override residual Wave yellow accents regardless of dynamic class suffixes */
+            [class^="link-"],
+            [class*=" link-"],
+            [class^="root-"],
+            [class*=" root-"],
+            [class^="fsk"],
+            [class*=" fsk"],
+            [style*="rgb(254, 201, 37)"],
+            [style*="rgb(254,201,37)"],
+            [style*="rgb(254 201 37)"] {
+                color: #7C4DFF !important;
+                fill: #7C4DFF !important;
+                stroke: #7C4DFF !important;
+                border-color: #7C4DFF !important;
+                text-decoration-color: #7C4DFF !important;
+            }
             """
         ),
         script=None,
