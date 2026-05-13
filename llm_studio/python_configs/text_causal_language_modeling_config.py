@@ -241,7 +241,7 @@ class ConfigNLPCausalLMTraining(DefaultConfig):
 
         self._possible_values["weight_decay"] = possible_values.Number(step=1e-5, min=0)
         self._possible_values["gradient_clip"] = (0.0, 10.0, 0.1)
-        self._possible_values["grad_accumulation"] = (1, 8, 1)
+        self._possible_values["grad_accumulation"] = (1, 32, 1)
 
         self._possible_values["lora_r"] = (1, 256, 1)
         self._possible_values["lora_alpha"] = (1, 256, 1)
