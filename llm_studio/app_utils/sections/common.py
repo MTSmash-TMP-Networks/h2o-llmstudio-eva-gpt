@@ -314,6 +314,16 @@ async def meta(q: Q) -> None:
                 border-bottom-color: #38BDF8 !important;
             }
 
+            /* Override selected link indicators like .linkIsSelected-457::before */
+            [class^="linkIsSelected-"]::before,
+            [class*=" linkIsSelected-"]::before,
+            [class^="linkIsSelected-"]::after,
+            [class*=" linkIsSelected-"]::after {
+                background: #38BDF8 !important;
+                background-color: #38BDF8 !important;
+                border-color: #38BDF8 !important;
+            }
+
             /* Override Wave-generated dropdown focus rings like .dropdown-273:focus::after */
             [class^="dropdown-"]:focus::before,
             [class*=" dropdown-"]:focus::before,
