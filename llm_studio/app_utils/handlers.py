@@ -355,6 +355,8 @@ async def handle(q: Q) -> None:
                     str(q.args["experiment/create_model/num_attention_heads"] or 32),
                     "--num-key-value-heads",
                     str(q.args["experiment/create_model/num_key_value_heads"] or 8),
+                    "--attn-implementation",
+                    str(q.args["experiment/create_model/attn_implementation"] or "eager"),
                 ]
                 model_log_path = os.path.join(run_base_dir, "create_model_init.log")
                 pipeline_steps = []

@@ -44,6 +44,9 @@ async def create_model(q: Q) -> None:
     num_hidden_layers = _client_value("experiment/create_model/num_hidden_layers", 16)
     num_attention_heads = _client_value("experiment/create_model/num_attention_heads", 32)
     num_key_value_heads = _client_value("experiment/create_model/num_key_value_heads", 8)
+    attn_implementation = (
+        q.client["experiment/create_model/attn_implementation"] or "eager"
+    )
     dataset_value = q.client["experiment/create_model/dataset_id"]
     if not dataset_value and dataset_choices:
         dataset_value = dataset_choices[0].name
@@ -180,6 +183,16 @@ async def create_model(q: Q) -> None:
                 name="experiment/create_model/num_key_value_heads",
                 label="KV heads",
                 value=num_key_value_heads,
+            ),
+            ui.dropdown(
+                name="experiment/create_model/attn_implementation",
+                label="Attention implementation",
+                choices=[
+                    ui.choice(name="eager", label="eager"),
+                    ui.choice(name="sdpa", label="sdpa"),
+                ],
+                value=attn_implementation,
+                required=True,
             ),
             ui.buttons(
                 items=[
