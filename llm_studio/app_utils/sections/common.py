@@ -9,6 +9,134 @@ from llm_studio.app_utils.config import default_cfg
 logger = logging.getLogger(__name__)
 
 
+MATELIX_WAVE_THEME_PATCH_JS = """
+function patchMatelixWaveThemeColors() {
+  const target = "#E2E8F0";
+  const blueTarget = "#38BDF8";
+
+  const waveVars = [
+    "--wave-primary",
+    "--wave-primary0",
+    "--wave-primary1",
+    "--wave-primary2",
+    "--wave-primary3",
+    "--wave-primary4",
+    "--wave-primary5",
+    "--wave-primary6",
+    "--wave-primary7",
+    "--wave-primary8",
+    "--wave-primary9",
+
+    "--wave-themePrimary",
+    "--wave-themeSecondary",
+    "--wave-themeTertiary",
+    "--wave-themeDark",
+    "--wave-themeDarkAlt",
+    "--wave-themeDarker",
+    "--wave-themeLight",
+    "--wave-themeLighter",
+    "--wave-themeLighterAlt",
+
+    "--wave-yellow",
+    "--wave-amber",
+    "--wave-lime"
+  ];
+
+  waveVars.forEach((name) => {
+    document.documentElement.style.setProperty(name, target);
+    if (document.body) {
+      document.body.style.setProperty(name, target);
+    }
+  });
+
+  // Override generated Wave / Fluent classes like .link-235 and .root-263.
+  document.querySelectorAll(
+    '[class^="link-"], [class*=" link-"], [class^="root-"], [class*=" root-"]'
+  ).forEach((el) => {
+    el.style.setProperty("color", target, "important");
+    el.style.setProperty("text-decoration-color", target, "important");
+  });
+
+  document.querySelectorAll(
+    '[class^="link-"] *, [class*=" link-"] *, [class^="root-"] *, [class*=" root-"] *'
+  ).forEach((el) => {
+    el.style.setProperty("color", target, "important");
+    el.style.setProperty("fill", target, "important");
+    el.style.setProperty("stroke", target, "important");
+    el.style.setProperty("text-decoration-color", target, "important");
+  });
+
+  // Override generated Wave / Fluent pill classes like .pill-303.
+  // These should use the MaTeLiX light blue accent, not the gray fallback.
+  document.querySelectorAll(
+    '[class^="pill-"], [class*=" pill-"]'
+  ).forEach((el) => {
+    el.style.setProperty("background", blueTarget, "important");
+    el.style.setProperty("background-color", blueTarget, "important");
+    el.style.setProperty("border-color", blueTarget, "important");
+  });
+
+  // Fallback: catch inline styles created after Wave rendering.
+  document.querySelectorAll("*").forEach((el) => {
+    const style = el.getAttribute("style") || "";
+    const styleLower = style.toLowerCase();
+
+    const hasWaveYellow =
+      style.includes("rgb(254, 201, 37)") ||
+      style.includes("rgb(254,201,37)") ||
+      style.includes("rgb(254 201 37)") ||
+      styleLower.includes("#fec925") ||
+      styleLower.includes("fec925") ||
+      styleLower.includes("#ffcf40") ||
+      styleLower.includes("ffcf40") ||
+      styleLower.includes("#ffde7d") ||
+      styleLower.includes("ffde7d");
+
+    if (hasWaveYellow) {
+      el.style.setProperty("color", target, "important");
+      el.style.setProperty("fill", target, "important");
+      el.style.setProperty("stroke", target, "important");
+      el.style.setProperty("border-color", target, "important");
+      el.style.setProperty("text-decoration-color", target, "important");
+    }
+  });
+}
+
+function startMatelixWaveThemePatch() {
+  patchMatelixWaveThemeColors();
+
+  // Wave applies theme values asynchronously, so patch several times.
+  setTimeout(patchMatelixWaveThemeColors, 50);
+  setTimeout(patchMatelixWaveThemeColors, 250);
+  setTimeout(patchMatelixWaveThemeColors, 1000);
+  setTimeout(patchMatelixWaveThemeColors, 2000);
+
+  if (!window.__matelixWaveThemeObserverStarted && document.body) {
+    window.__matelixWaveThemeObserverStarted = true;
+
+    new MutationObserver(() => {
+      patchMatelixWaveThemeColors();
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["style", "class"]
+    });
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", startMatelixWaveThemePatch);
+} else {
+  startMatelixWaveThemePatch();
+}
+"""
+
+
+def matelix_wave_theme_patch() -> ui.InlineScript:
+    return ui.inline_script(content=MATELIX_WAVE_THEME_PATCH_JS)
+
+
 async def meta(q: Q) -> None:
     if q.client["keep_meta"]:  # Do not reset meta, keep current dialog opened
         q.client["keep_meta"] = False
@@ -40,11 +168,12 @@ async def meta(q: Q) -> None:
         ],
         stylesheet=ui.inline_stylesheet(
             """
-             .ms-MessageBar {
+            .ms-MessageBar {
               padding-top: 3px;
               padding-bottom: 3px;
               min-height: 18px;
             }
+
             div[data-test="nav_bar"] .ms-Nav-groupContent {
               margin-bottom: 0;
             }
@@ -129,8 +258,9 @@ async def meta(q: Q) -> None:
                 fill: #FFFFFF !important;
             }
 
-            /* Enforce MaTeLiX accent colors via theme tokens (instead of volatile class names) */
-            :root {
+            /* Enforce MaTeLiX accent colors via theme tokens */
+            :root,
+            body {
                 --themePrimary: #38BDF8;
                 --themeLighterAlt: #F5F3FF;
                 --themeLighter: #EDE9FE;
@@ -141,21 +271,76 @@ async def meta(q: Q) -> None:
                 --themeDark: #0369A1;
                 --themeDarker: #0C4A6E;
                 --paletteYellow: #E2E8F0;
+
+                --wave-primary: #E2E8F0 !important;
+                --wave-themePrimary: #E2E8F0 !important;
+                --wave-themeSecondary: #E2E8F0 !important;
+                --wave-themeTertiary: #E2E8F0 !important;
+                --wave-themeDark: #E2E8F0 !important;
+                --wave-themeDarkAlt: #E2E8F0 !important;
+                --wave-themeDarker: #E2E8F0 !important;
+                --wave-yellow: #E2E8F0 !important;
+                --wave-amber: #E2E8F0 !important;
+                --wave-lime: #E2E8F0 !important;
             }
 
-            /* Fallback for inline yellow values coming from Wave internals */
-            [style*="rgb(254, 201, 37)"],
-            [style*="rgb(254,201,37)"],
-            [style*="rgb(254 201 37)"] {
+            /* Override Wave-generated Fluent/Wave classes like .link-235 and .root-263 */
+            [class^="link-"],
+            [class*=" link-"],
+            [class^="root-"],
+            [class*=" root-"] {
+                color: #E2E8F0 !important;
+                text-decoration-color: #E2E8F0 !important;
+            }
+
+            [class^="link-"] *,
+            [class*=" link-"] *,
+            [class^="root-"] *,
+            [class*=" root-"] * {
                 color: #E2E8F0 !important;
                 fill: #E2E8F0 !important;
                 stroke: #E2E8F0 !important;
-                border-color: #E2E8F0 !important;
                 text-decoration-color: #E2E8F0 !important;
+            }
+
+            /* Override Wave-generated pseudo elements like .link-232::after */
+            [class^="link-"]::before,
+            [class*=" link-"]::before,
+            [class^="link-"]::after,
+            [class*=" link-"]::after {
+                border-left-color: #38BDF8 !important;
+                border-right-color: #38BDF8 !important;
+                border-top-color: #38BDF8 !important;
+                border-bottom-color: #38BDF8 !important;
+            }
+
+            /* Override Wave-generated toggle/pill classes like .pill-303 */
+            [class^="pill-"],
+            [class*=" pill-"] {
+                background: #38BDF8 !important;
+                background-color: #38BDF8 !important;
+                border-color: #38BDF8 !important;
+            }
+
+            /* Fallback for inline yellow values coming from Wave internals */
+            [style*="254, 201, 37"],
+            [style*="254,201,37"],
+            [style*="254 201 37"],
+            [style*="FEC925"],
+            [style*="fec925"],
+            [style*="ffcf40"],
+            [style*="FFCF40"],
+            [style*="ffde7d"],
+            [style*="FFDE7D"] {
+              color: #E2E8F0 !important;
+              fill: #E2E8F0 !important;
+              stroke: #E2E8F0 !important;
+              border-color: #E2E8F0 !important;
+              text-decoration-color: #E2E8F0 !important;
             }
             """
         ),
-        script=None,
+        script=matelix_wave_theme_patch(),
         notification_bar=notification_bar,
     )
 
@@ -189,6 +374,8 @@ def heap_analytics(
 
     if event_properties is not None:
         script += f"heap.addEventProperties({event_properties})"
+
+    script += MATELIX_WAVE_THEME_PATCH_JS
 
     return ui.inline_script(content=script)
 
@@ -334,18 +521,24 @@ async def heap_redact(q: Q) -> None:
 
         # replace dataset names with ****
         q.page["meta"].script = ui.inline_script(
-            """
+            content="""
 document.querySelectorAll('div[data-automation-key="name"]').forEach(a => {
   a.setAttribute('data-heap-redact-text', '')
 })
 
-document.querySelector('div[data-test="datasets_table"] \
-.ms-ScrollablePane--contentContainer').addEventListener('scroll', () => {
-  window.setTimeout(() => {{
-    document.querySelectorAll('div[data-automation-key="name"]').forEach(a => {
-      a.setAttribute('data-heap-redact-text', '')
-    })
-  }}, 100)
-})
-    """
+const datasetsTable = document.querySelector(
+  'div[data-test="datasets_table"] .ms-ScrollablePane--contentContainer'
+);
+
+if (datasetsTable) {
+  datasetsTable.addEventListener('scroll', () => {
+    window.setTimeout(() => {
+      document.querySelectorAll('div[data-automation-key="name"]').forEach(a => {
+        a.setAttribute('data-heap-redact-text', '')
+      })
+    }, 100)
+  })
+}
+"""
+            + MATELIX_WAVE_THEME_PATCH_JS
         )
