@@ -19,7 +19,7 @@ class ThemeColors(TypedDict):
 
 class WaveTheme:
     _theme_colors: ThemeColors = {
-        "primary": "#7C4DFF",
+        "primary": "#38BDF8",
         "background_color": "#111827",
     }
 
@@ -31,8 +31,8 @@ class WaveTheme:
         "failed": "#EF4444",
         "stopped": "#F97316",
     }
-    color = "#7C4DFF"
-    color_range = "#7C4DFF #06B6D4 #22C55E #F97316 #EF4444 #EC4899 #14B8A6 #A78BFA"
+    color = "#38BDF8"
+    color_range = "#38BDF8 #0EA5E9 #22D3EE #22C55E #F97316 #EF4444 #A78BFA #E879F9"
 
     def __repr__(self) -> str:
         return "WaveTheme"
