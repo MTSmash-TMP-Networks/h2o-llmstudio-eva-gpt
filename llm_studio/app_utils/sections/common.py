@@ -175,7 +175,7 @@ async def interface(q: Q) -> None:
             box="header",
             title=default_cfg.name,
             image=q.app["icon_path"],
-            subtitle="<span style='color:#FFFFFF'>v14.4.MaTeLiX-DEV</span>",
+            subtitle="v14.4.MaTeLiX-DEV",
         )
 
         if q.app.heap_mode:
