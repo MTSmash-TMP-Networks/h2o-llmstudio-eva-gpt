@@ -40,16 +40,20 @@ setup-dev: uv  # Install dependencies including dev dependencies
 patch-wave-theme:
 	@echo "Patching H2O Wave h2o-dark theme colors..."
 	@if [ -d ".venv/www/wave-static" ]; then \
-		find .venv/www/wave-static -name "index-*.js" -type f -exec perl -pi -e '\
-			s/#fec925/#38BDF8/g; \
-			s/#ffcf40/#38BDF8/g; \
-			s/#ffde7d/#7DD3FC/g; \
-			s/#e6b522/#0EA5E9/g; \
-			s/#c2991d/#0284C7/g; \
-			s/#8f7015/#0369A1/g; \
-			s/rgb\(254,\s*201,\s*37\)/rgb(56, 189, 248)/g; \
-			s/rgb\(194,\s*153,\s*29\)/rgb(56, 189, 248)/g; \
-		' {} \; ; \
+		set -e; \
+		find .venv/www/wave-static -name "index-*.js" -type f | while read -r file; do \
+			echo "Patching $$file"; \
+			perl -pi \
+				-e 's/#fec925/#38BDF8/g' \
+				-e 's/#ffcf40/#38BDF8/g' \
+				-e 's/#ffde7d/#7DD3FC/g' \
+				-e 's/#e6b522/#0EA5E9/g' \
+				-e 's/#c2991d/#0284C7/g' \
+				-e 's/#8f7015/#0369A1/g' \
+				-e 's/rgb\(254,\s*201,\s*37\)/rgb(56, 189, 248)/g' \
+				-e 's/rgb\(194,\s*153,\s*29\)/rgb(56, 189, 248)/g' \
+				"$$file"; \
+		done; \
 		echo "Wave theme patch applied."; \
 	else \
 		echo "Wave static directory not found, skipping patch."; \
