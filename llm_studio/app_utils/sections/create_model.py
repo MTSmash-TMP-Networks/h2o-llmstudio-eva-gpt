@@ -246,14 +246,6 @@ async def create_model_logs(q: Q, follow: bool = False) -> None:
         tokenizer_log_text = tail_log(tokenizer_log_path) if tokenizer_log_path else ""
         model_log_text = tail_log(model_log_path) if model_log_path else ""
         is_running = _is_process_running(pipeline_pid)
-        elapsed_text = "n/a"
-        if pipeline_started_at:
-            elapsed_text = _format_duration(time.time() - float(pipeline_started_at))
-        remaining_seconds = _estimate_remaining_seconds(pipeline_started_at, is_running)
-        remaining_text = (
-            _format_duration(remaining_seconds) if remaining_seconds and is_running else "Wird berechnet…" if is_running else "0s"
-        )
-        status_text = "Running" if is_running else "Completed"
 
         q.page["experiment/create_model/logs"] = ui.form_card(
             box="content",
@@ -268,13 +260,6 @@ async def create_model_logs(q: Q, follow: bool = False) -> None:
                         ),
                         ui.button(name="experiment/create_model", label="Back"),
                     ]
-                ),
-                ui.message_bar(
-                    type="info",
-                    text=(
-                        f"Pipeline status: {status_text}. Laufzeit: {elapsed_text}. "
-                        f"Geschätzte Restzeit: {remaining_text}."
-                    ),
                 ),
                 ui.text_l("Tokenizer log"),
                 ui.text(
