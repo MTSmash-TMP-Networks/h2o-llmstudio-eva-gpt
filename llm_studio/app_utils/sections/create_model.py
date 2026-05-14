@@ -3,6 +3,7 @@ import shutil
 import signal
 import subprocess
 import time
+from glob import glob
 
 import pandas as pd
 from h2o_wave import Q, ui
@@ -17,6 +18,7 @@ async def create_model(q: Q) -> None:
 
     q.client["nav/active"] = "experiment/create_model"
     await clean_dashboard(q, mode="full")
+    _hydrate_latest_create_model_logs(q)
 
     datasets_df = q.client.app_db.get_datasets_df()
     dataset_choices = []
@@ -347,6 +349,33 @@ def _get_created_models_df(output_dir: str) -> pd.DataFrame:
             model_rows.append({"name": entry, "path": path})
 
     return pd.DataFrame(model_rows, columns=["name", "path"])
+
+
+def _hydrate_latest_create_model_logs(q: Q) -> None:
+    """Restore latest available create-model logs after navigation."""
+
+    tokenizer_log_path = q.client["experiment/create_model/tokenizer_log_path"]
+    model_log_path = q.client["experiment/create_model/model_log_path"]
+
+    if (tokenizer_log_path and os.path.exists(tokenizer_log_path)) or (
+        model_log_path and os.path.exists(model_log_path)
+    ):
+        return
+
+    pattern = os.path.join(
+        get_output_dir(q), "*__create_model_work", "create_model_init.log"
+    )
+    latest_model_logs = sorted(glob(pattern), key=os.path.getmtime, reverse=True)
+    if not latest_model_logs:
+        return
+
+    latest_model_log = latest_model_logs[0]
+    latest_tokenizer_log = os.path.join(
+        os.path.dirname(latest_model_log), "create_model_tokenizer.log"
+    )
+    q.client["experiment/create_model/model_log_path"] = latest_model_log
+    if os.path.exists(latest_tokenizer_log):
+        q.client["experiment/create_model/tokenizer_log_path"] = latest_tokenizer_log
 
 
 def delete_created_model(model_path: str) -> bool:
