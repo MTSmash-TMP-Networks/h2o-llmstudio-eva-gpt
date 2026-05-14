@@ -1122,7 +1122,7 @@ async def experiment_display(q: Q) -> None:
         ui.tab(name="experiment/display/config", label="Config"),
     ]
 
-    if status == "finished" and checkpoints_exists:
+    if status in {"finished", "stopped"} and checkpoints_exists:
         tabs += [ui.tab(name="experiment/display/chat", label="Chat")]
 
     q.page["experiment/display/tab"] = ui.tab_card(
@@ -1160,7 +1160,7 @@ async def experiment_display(q: Q) -> None:
         )
     ]
 
-    if status == "finished":
+    if status in {"finished", "stopped"}:
         buttons += [
             ui.button(
                 name="experiment/display/download_predictions",
