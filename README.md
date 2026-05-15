@@ -2,130 +2,87 @@
 <p align="center"><img src="llm_studio/app_utils/static/llm-studio-logo.png#gh-light-mode-only"></p>
 
 <h3 align="center">
-    <p>Welcome to H2O LLM Studio, a framework and no-code GUI designed for<br />
-    fine-tuning state-of-the-art large language models (LLMs).
-</p>
+    <p>EVA GPT Studio is a practical GUI + CLI framework for fine-tuning,
+    evaluating, and serving large language models.</p>
 </h3>
 
-<a href="https://user-images.githubusercontent.com/1069138/233859311-32aa1f8c-4d68-47ac-8cd9-9313171ff9f9.png"><img width="50%" alt="home" src="https://user-images.githubusercontent.com/1069138/233859311-32aa1f8c-4d68-47ac-8cd9-9313171ff9f9.png"></a><a href="https://user-images.githubusercontent.com/1069138/233859315-e6928aa7-28d2-420b-8366-bc7323c368ca.png"><img width="50%" alt="logs" src="https://user-images.githubusercontent.com/1069138/233859315-e6928aa7-28d2-420b-8366-bc7323c368ca.png"></a>
+> This repository started from H2O LLM Studio and has evolved into an EVA-focused fork.
 
-## Jump to
+## Overview
 
-- [With H2O LLM Studio, you can](#with-h2o-llm-studio-you-can)
-- [Quickstart](#quickstart)
-- [What's New](#whats-new)
-- [Setup](#setup)
-  - [Recommended Install](#recommended-install)
-  - [Virtual Environments](#virtual-environments)
-- [Run H2O LLM Studio GUI](#run-h2o-llm-studio-gui)
-- [Run H2O LLM Studio GUI using Docker](#run-h2o-llm-studio-gui-using-docker)
-- [Run H2O LLM Studio with command line interface (CLI)](#run-h2o-llm-studio-with-command-line-interface-cli)
+EVA GPT Studio is designed for teams that want fast iteration on LLM experiments without rebuilding the entire training stack from scratch.
+
+Core capabilities:
+
+- Fine-tune instruction/chat models via a no-code graphical interface.
+- Run training and inference workflows from CLI for automation.
+- Support modern adaptation techniques (LoRA, quantization-aware workflows, multi-GPU training).
+- Track experiments and compare runs with integrated visual tooling.
+- Chat with trained checkpoints directly in the app.
+- Export and publish trained artifacts.
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [System Requirements](#system-requirements)
+- [Installation](#installation)
+  - [Recommended (uv)](#recommended-uv)
+  - [Alternative (pip)](#alternative-pip)
+- [Run the GUI](#run-the-gui)
+- [Run with Docker](#run-with-docker)
+- [Run via CLI](#run-via-cli)
+- [Data Format](#data-format)
+- [Project Structure](#project-structure)
 - [Troubleshooting](#troubleshooting)
-- [Data format and example data](#data-format-and-example-data)
-- [Training your model](#training-your-model)
-- [Example: Run on OASST data via CLI](#example-run-on-oasst-data-via-cli)
-- [Model checkpoints](#model-checkpoints)
-- [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
-## With H2O LLM Studio, you can
-
-- easily and effectively fine-tune LLMs **without the need for any coding experience**.
-- use a **graphical user interface (GUI)** specially designed for large language models.
-- fine-tune any LLM using a large variety of hyperparameters.
-- use recent fine-tuning techniques such as [Low-Rank Adaptation (LoRA)](https://arxiv.org/abs/2106.09685) and 8-bit model training with a low memory footprint.
-- use Reinforcement Learning (RL) to fine-tune your model (experimental).
-- use advanced evaluation metrics to judge generated answers by the model.
-- track and compare your model performance visually. In addition, [Neptune](https://neptune.ai/) and [W&B](https://wandb.ai/) integration can be used.
-- chat with your model and get instant feedback on your model performance.
-- easily export your model to the [Hugging Face Hub](https://huggingface.co/) and share it with the community.
-
-## Quickstart
-
-For questions, discussing, or just hanging out, come and join our [Discord](https://discord.gg/WKhYMWcVbq)!
-
-Use cloud-based runpod.io instance to run the latest version of H2O LLM Studio with GUI.
-
-[![open_in_runpod](https://github.com/user-attachments/assets/0dffd945-0be0-4ef0-85cd-4e6f260d4e6c)](https://www.runpod.io/console/deploy?template=vf9ppiy56z)
-
-Using CLI for fine-tuning LLMs:
-
-[![Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/code/ilu000/h2o-llm-studio-cli/) [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1soqfJjwDJwjjH-VzZYO_pUeLx5xY4N1K?usp=sharing)
-
-## What's New
-
-- [PR 788](https://github.com/h2oai/h2o-llmstudio/pull/788) New problem type for Causal Regression Modeling allows to train single target regression data using LLMs.
-- [PR 747](https://github.com/h2oai/h2o-llmstudio/pull/747) Fully removed RLHF in favor of DPO/IPO/KTO optimization.
-- [PR 741](https://github.com/h2oai/h2o-llmstudio/pull/741) Removing separate max length settings for prompt and answer in favor of a single `max_length` settings better resembling `chat_template` functionality from `transformers`.
-- [PR 592](https://github.com/h2oai/h2o-llmstudio/pull/599) Added `KTOPairLoss` for DPO modeling allowing to train models with simple preference data. Data currently needs to be manually prepared by randomly matching positive and negative examples as pairs.
-- [PR 592](https://github.com/h2oai/h2o-llmstudio/pull/592) Starting to deprecate RLHF in favor of DPO/IPO optimization. Training is disabled, but old experiments are still viewable. RLHF will be fully removed in a future release.
-- [PR 530](https://github.com/h2oai/h2o-llmstudio/pull/530) Introduced a new problem type for DPO/IPO optimization. This optimization technique can be used as an alternative to RLHF.
-- [PR 288](https://github.com/h2oai/h2o-llmstudio/pull/288) Introduced DeepSpeed for sharded training allowing to train larger models on machines with multiple GPUs. Requires NVLink. This feature replaces FSDP and offers more flexibility. DeepSpeed requires a system installation of CUDA Toolkit and we recommend using version 12.1. See [Recommended Install](#recommended-install).
-- [PR 449](https://github.com/h2oai/h2o-llmstudio/pull/449) New problem type for Causal Classification Modeling allows to train binary and multiclass models using LLMs.
-- [PR 364](https://github.com/h2oai/h2o-llmstudio/pull/364) User secrets are now handled more securely and flexible. Support for handling secrets using the 'keyring' library was added. User settings are tried to be migrated automatically.
-
-Please note that due to current rapid development we cannot guarantee full backwards compatibility of new functionality. We thus recommend to pin the version of the framework to the one you used for your experiments. For resetting, please delete/backup your `data` and `output` folders.
-
-## Setup
-
-H2O LLM Studio requires a machine with Ubuntu 16.04+ and at least one recent NVIDIA GPU with NVIDIA drivers version >= 470.57.02. For larger models, we recommend at least 24GB of GPU memory.
-
-For more information about installation prerequisites, see the [Set up H2O LLM Studio](https://docs.h2o.ai/h2o-llmstudio/get-started/set-up-llm-studio#prerequisites) guide in the documentation.
-
-For a performance comparison of different GPUs, see the [H2O LLM Studio performance](https://h2oai.github.io/h2o-llmstudio/get-started/llm-studio-performance) guide in the documentation.
-
-### Recommended Install
-
-The recommended way to install H2O LLM Studio is using `uv` with Python 3.10. To install Python 3.10 on Ubuntu 20.04+, execute the following commands:
-
-#### Installing NVIDIA Drivers (if required)
-
-If deploying on a 'bare metal' machine running Ubuntu, one may need to install the required NVIDIA drivers and CUDA. The following commands show how to retrieve the latest drivers for a machine running Ubuntu 20.04 as an example. One can update the following based on their OS.
+## Quick Start
 
 ```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
-sudo mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600
-wget https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda-repo-ubuntu2204-12-4-local_12.4.0-550.54.14-1_amd64.deb
-sudo dpkg -i cuda-repo-ubuntu2204-12-4-local_12.4.0-550.54.14-1_amd64.deb
-sudo cp /var/cuda-repo-ubuntu2204-12-4-local/cuda-*-keyring.gpg /usr/share/keyrings/
-sudo apt-get update
-sudo apt-get -y install cuda-toolkit-12-4
+make setup
+make llmstudio
 ```
 
-### Virtual environments
+Then open: <http://localhost:10101/>
 
-We offer various ways of setting up the necessary python environment.
+## System Requirements
 
-#### UV virtual environment
+Minimum recommended environment:
 
-The following command will create a virtual environment using `uv` and will install the dependencies:
+- Ubuntu 20.04+ (Linux recommended)
+- Python 3.10
+- NVIDIA GPU + recent drivers
+- CUDA-compatible PyTorch runtime
+- 24 GB+ VRAM for larger models
+
+CPU-only workflows may work for limited scenarios (for example preprocessing or lightweight evaluation) but training performance will be significantly reduced.
+
+## Installation
+
+### Recommended (uv)
 
 ```bash
 make setup
 ```
 
-#### Using requirements.txt
+This creates a local environment and installs the project dependencies.
 
-If you wish to use another virtual environment, you can also install the dependencies using the requirements.txt file:
+### Alternative (pip)
 
 ```bash
 pip install -r requirements.txt
-pip install flash-attn==2.8.3 --no-build-isolation  # optional for Flash Attention 2
+# optional acceleration package
+pip install flash-attn==2.8.3 --no-build-isolation
 ```
 
-## Run H2O LLM Studio GUI
-
-You can start H2O LLM Studio using the following command:
+## Run the GUI
 
 ```bash
 make llmstudio
 ```
 
-This command will start the [H2O Wave](https://github.com/h2oai/wave) server and app.
-Navigate to <http://localhost:10101/> (we recommend using Chrome) to access H2O LLM Studio and start fine-tuning your models!
-
-If you are running H2O LLM Studio with a custom environment other than `uv`, you need to start the app as follows:
+If you run outside the default `uv` setup, start manually:
 
 ```bash
 H2O_WAVE_MAX_REQUEST_SIZE=25MB \
@@ -134,117 +91,94 @@ H2O_WAVE_PRIVATE_DIR="/download/@output/download" \
 wave run llm_studio.app
 ```
 
-## Run H2O LLM Studio GUI using Docker
+App URL: <http://localhost:10101/>
 
-Install Docker first by following instructions from [NVIDIA Containers](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#docker). Make sure to have `nvidia-container-toolkit` installed on your machine as outlined in the instructions.
-
-H2O LLM Studio images are stored in the h2oai Docker Hub container repository.
+## Run with Docker
 
 ```bash
-mkdir -p `pwd`/llmstudio_mnt
-chmod 777 `pwd`/llmstudio_mnt
+mkdir -p "$(pwd)/llmstudio_mnt"
+chmod 777 "$(pwd)/llmstudio_mnt"
 
-# make sure to pull latest image if you still have a prior version cached
 docker pull h2oairelease/h2oai-llmstudio-app:latest
 
-# run the container
 docker run \
-    --runtime=nvidia \
-    --shm-size=64g \
-    --init \
-    --rm \
-    -it \
-    -u `id -u`:`id -g` \
-    -p 10101:10101 \
-    -v `pwd`/llmstudio_mnt:/mount \
-    h2oairelease/h2oai-llmstudio-app:latest
+  --runtime=nvidia \
+  --shm-size=64g \
+  --init \
+  --rm \
+  -it \
+  -u "$(id -u):$(id -g)" \
+  -p 10101:10101 \
+  -v "$(pwd)/llmstudio_mnt:/mount" \
+  h2oairelease/h2oai-llmstudio-app:latest
 ```
 
-Navigate to <http://localhost:10101/> (we recommend using Chrome) to access H2O LLM Studio and start fine-tuning your models!
+Then open: <http://localhost:10101/>
 
-(Note other helpful docker commands are `docker ps` and `docker kill`.)
+## Run via CLI
 
-## Run H2O LLM Studio with command line interface (CLI)
-
-You can also use H2O LLM Studio with the command line interface (CLI) and specify the configuration .yaml file that contains all the experiment parameters. To fine-tune using H2O LLM Studio with CLI use the following command:
+Train from a YAML config:
 
 ```bash
-uv run python llm_studio/train.py -Y {path_to_config_yaml_file}
+uv run python llm_studio/train.py -Y {path_to_config_yaml}
 ```
 
-To run on multiple GPUs in DDP mode, run the following command:
+Distributed training:
 
 ```bash
-bash distributed_train.sh {NR_OF_GPUS} -Y {path_to_config_yaml_file}
+bash distributed_train.sh {NUM_GPUS} -Y {path_to_config_yaml}
 ```
 
-By default, the framework will run on the first `k` GPUs. If you want to specify specific GPUs to run on, use the `CUDA_VISIBLE_DEVICES` environment variable before the command.
-
-To start an interactive chat with your trained model, use the following command:
+Interactive prompt against a trained experiment:
 
 ```bash
 uv run python llm_studio/prompt.py -e {experiment_name}
 ```
 
-where `experiment_name` is the output folder of the experiment you want to chat with (see configuration).
-The interactive chat will also work with model that were fine-tuned using the UI.
-
-To publish the model to Hugging Face, use the following command:
+Publish an experiment to Hugging Face:
 
 ```bash
-uv run python llm_studio/publish_to_hugging_face.py -p {path_to_experiment} -d {device} -a {api_key} -u {user_id} -m {model_name} -s {safe_serialization}
+uv run python llm_studio/publish_to_hugging_face.py \
+  -p {path_to_experiment} \
+  -d {device} \
+  -a {api_key} \
+  -u {user_id} \
+  -m {model_name} \
+  -s {safe_serialization}
 ```
 
-`path_to_experiment` is the output folder of the experiment.
-`device` is the target device for running the model, either 'cpu' or 'cuda:0'. Default is 'cuda:0'.
-`api_key` is the Hugging Face API Key. If the user is logged in, it can be omitted.
-`user_id` is the Hugging Face user ID. If the user is logged in, it can be omitted.
-`model_name` is the name of the model to be published on Hugging Face. It can be omitted.
-`safe_serialization` is a flag indicating whether safe serialization should be used. Default is True.
+## Data Format
+
+See the docs under [`documentation/`](documentation/) and in-app dataset tooling for expected column schemas and task-specific formats.
+
+## Project Structure
+
+- `llm_studio/` — main application and training framework
+- `examples/` — example configs and data snippets
+- `documentation/` — project docs source
+- `tests/` — unit/UI tests
 
 ## Troubleshooting
 
-If running on cloud-based machines such as runpod, you may need to set the following environment variable to allow the H2O Wave server to accept connections from the proxy:
+Remote/proxy environments may require:
 
 ```bash
-H2O_WAVE_ALLOWED_ORIGINS="*"
+export H2O_WAVE_ALLOWED_ORIGINS="*"
 ```
 
-If you are experiencing timeouts when running the H2O Wave server remotely, you can increase the timeout by setting the following environment variables:
+For timeout issues:
 
 ```bash
-H2O_WAVE_APP_CONNECT_TIMEOUT="15"
-H2O_WAVE_APP_WRITE_TIMEOUT="15"
-H2O_WAVE_APP_READ_TIMEOUT="15"
-H2O_WAVE_APP_POOL_TIMEOUT="15"
+export H2O_WAVE_APP_CONNECT_TIMEOUT="15"
+export H2O_WAVE_APP_WRITE_TIMEOUT="15"
+export H2O_WAVE_APP_READ_TIMEOUT="15"
+export H2O_WAVE_APP_POOL_TIMEOUT="15"
 ```
-
-All default to 5 (seconds). Increase them if you are experiencing timeouts. Use -1 to disable the timeout.
-
-## Data format and example data
-
-For details on the data format required when importing your data or example data that you can use to try out H2O LLM Studio, see [Data format](https://docs.h2o.ai/h2o-llmstudio/guide/datasets/data-connectors-format#data-format) in the H2O LLM Studio documentation.
-
-## Training your model
-
-With H2O LLM Studio, training your large language model is easy and intuitive. First, upload your dataset and then start training your model. Start by [creating an experiment](https://docs.h2o.ai/h2o-llmstudio/guide/experiments/create-an-experiment). You can then [monitor and manage your experiment](https://docs.h2o.ai/h2o-llmstudio/guide/experiments/view-an-experiment), [compare experiments](https://docs.h2o.ai/h2o-llmstudio/guide/experiments/compare-experiments), or [push the model to Hugging Face](https://docs.h2o.ai/h2o-llmstudio/guide/experiments/export-trained-model) to share it with the community.
-
-## Example: Run on OASST data via CLI
-
-As an example, you can run an experiment on the OASST data via CLI. For instructions, see [Run an experiment on the OASST data](https://docs.h2o.ai/h2o-llmstudio/guide/experiments/create-an-experiment#run-an-experiment-on-the-oasst-data-via-cli) guide in the H2O LLM Studio documentation.
-
-## Model checkpoints
-
-All open-source datasets and models are posted on [H2O.ai's Hugging Face page](https://huggingface.co/h2oai/) and our [H2OGPT](https://github.com/h2oai/h2ogpt) repository.
-
-## Documentation
-
-Detailed documentation and frequently asked questions (FAQs) for H2O LLM Studio can be found at <https://docs.h2o.ai/h2o-llmstudio/>. If you wish to contribute to the docs, navigate to the `/documentation` folder of this repo and refer to the [README.md](documentation/README.md) for more information.
 
 ## Contributing
 
-We are happy to accept contributions to the H2O LLM Studio project. Please refer to the [CONTRIBUTING.md](CONTRIBUTING.md) file for more information.
+Contributions are welcome. Please start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-H2O LLM Studio is licensed under the Apache 2.0 license. Please see the [LICENSE](LICENSE) file for more information.
+Apache 2.0. See [LICENSE](LICENSE).
