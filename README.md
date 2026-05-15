@@ -1,7 +1,7 @@
 <img width="898" height="120" alt="Screenshot 2026-05-15 at 21-40-33 MaTeLiX AI Studio" align="center" src="https://github.com/user-attachments/assets/686b3ce7-7289-470f-af52-115dc6826284" />
 
 <h3 align="center">
-    <p>EVA GPT Studio is a practical GUI + CLI framework for fine-tuning,
+    <p>EvaGPT LLM Studio is a practical GUI + CLI framework for fine-tuning,
     evaluating, and serving large language models.</p>
 </h3>
 
