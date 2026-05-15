@@ -9,7 +9,7 @@
 
 ## Overview
 
-EVA GPT Studio is designed for teams that want fast iteration on LLM experiments without rebuilding the entire training stack from scratch.
+EvaGPT LLM Studio is designed for teams that want fast iteration on LLM experiments without rebuilding the entire training stack from scratch.
 
 Core capabilities:
 
