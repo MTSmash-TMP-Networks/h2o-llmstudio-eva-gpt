@@ -121,6 +121,10 @@ def build_training_file(table_path: str, out_txt: str, max_line_chars: int) -> N
 
 
 def reservoir_sample(input_path: str, output_path: str, max_lines: int, seed: int) -> None:
+    if max_lines <= 0:
+        shutil.copyfile(input_path, output_path)
+        return
+
     random.seed(seed)
     reservoir: list[str] = []
     total = 0
@@ -149,8 +153,20 @@ def main() -> None:
     p.add_argument("--tokenizer-fast-dir", default="./tokenizer_fast")
     p.add_argument("--model-prefix", default="tokenizer")
     p.add_argument("--vocab-size", type=int, default=128256)
-    p.add_argument("--max-lines", type=int, default=500000)
+    p.add_argument(
+        "--max-lines",
+        type=int,
+        default=0,
+        help="Maximum number of lines sampled for training. Use 0 to train on all available lines.",
+    )
     p.add_argument("--max-line-chars", type=int, default=4096)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--model-type", choices=("bpe", "unigram"), default="bpe")
+    p.add_argument("--character-coverage", type=float, default=0.99995)
+    p.add_argument("--input-sentence-size", type=int, default=0)
+    p.add_argument("--num-threads", type=int, default=max(1, os.cpu_count() or 1))
+    p.add_argument("--shuffle-input-sentence", action="store_true", default=True)
+    p.add_argument("--no-shuffle-input-sentence", dest="shuffle_input_sentence", action="store_false")
     args = p.parse_args()
 
     args.csv = _resolve_table_path(args.csv, args.dataset_name)
@@ -158,27 +174,32 @@ def main() -> None:
     train_txt = os.path.join(os.path.dirname(args.csv), "train_data_from_csv.txt")
     sampled_txt = os.path.join(os.path.dirname(args.csv), "train_data_sampled.txt")
     build_training_file(args.csv, train_txt, args.max_line_chars)
-    reservoir_sample(train_txt, sampled_txt, args.max_lines, seed=42)
+    reservoir_sample(train_txt, sampled_txt, args.max_lines, seed=args.seed)
 
-    spm.SentencePieceTrainer.train(
-        input=sampled_txt,
-        model_prefix=args.model_prefix,
-        vocab_size=args.vocab_size,
-        model_type="bpe",
-        byte_fallback=True,
-        split_by_whitespace=False,
-        split_by_unicode_script=False,
-        input_sentence_size=min(args.max_lines, 500000),
-        shuffle_input_sentence=True,
-        unk_id=0,
-        bos_id=1,
-        eos_id=2,
-        pad_id=3,
-        unk_piece="<unk>",
-        bos_piece="<s>",
-        eos_piece="</s>",
-        pad_piece="<pad>",
-    )
+    trainer_kwargs = {
+        "input": sampled_txt,
+        "model_prefix": args.model_prefix,
+        "vocab_size": args.vocab_size,
+        "model_type": args.model_type,
+        "character_coverage": args.character_coverage,
+        "num_threads": args.num_threads,
+        "byte_fallback": True,
+        "split_by_whitespace": False,
+        "split_by_unicode_script": False,
+        "shuffle_input_sentence": args.shuffle_input_sentence,
+        "unk_id": 0,
+        "bos_id": 1,
+        "eos_id": 2,
+        "pad_id": 3,
+        "unk_piece": "<unk>",
+        "bos_piece": "<s>",
+        "eos_piece": "</s>",
+        "pad_piece": "<pad>",
+    }
+    if args.input_sentence_size > 0:
+        trainer_kwargs["input_sentence_size"] = args.input_sentence_size
+
+    spm.SentencePieceTrainer.train(**trainer_kwargs)
 
     tok_cfg = {"bos_token": "<s>", "eos_token": "</s>", "unk_token": "<unk>", "pad_token": "<pad>", "tokenizer_class": "LlamaTokenizer"}
     with open("tokenizer_config.json", "w", encoding="utf-8") as f:
