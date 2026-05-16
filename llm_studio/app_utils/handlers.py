@@ -273,6 +273,24 @@ async def handle(q: Q) -> None:
             q.client["experiment/create_model/max_lines"] = q.args[
                 "experiment/create_model/max_lines"
             ]
+            q.client["experiment/create_model/tokenizer_model_type"] = (
+                q.args["experiment/create_model/tokenizer_model_type"] or "bpe"
+            )
+            q.client["experiment/create_model/character_coverage"] = q.args[
+                "experiment/create_model/character_coverage"
+            ]
+            q.client["experiment/create_model/input_sentence_size"] = q.args[
+                "experiment/create_model/input_sentence_size"
+            ]
+            q.client["experiment/create_model/tokenizer_seed"] = q.args[
+                "experiment/create_model/tokenizer_seed"
+            ]
+            q.client["experiment/create_model/tokenizer_num_threads"] = q.args[
+                "experiment/create_model/tokenizer_num_threads"
+            ]
+            q.client["experiment/create_model/shuffle_input_sentence"] = bool(
+                q.args["experiment/create_model/shuffle_input_sentence"]
+            )
             q.client["experiment/create_model/use_pretrained_tokenizer"] = bool(
                 q.args["experiment/create_model/use_pretrained_tokenizer"]
             )
@@ -335,8 +353,25 @@ async def handle(q: Q) -> None:
                     "--vocab-size",
                     str(q.args["experiment/create_model/vocab_size"] or 128256),
                     "--max-lines",
-                    str(q.args["experiment/create_model/max_lines"] or 500000),
+                    str(q.args["experiment/create_model/max_lines"] or 0),
+                    "--model-type",
+                    str(q.args["experiment/create_model/tokenizer_model_type"] or "bpe"),
+                    "--character-coverage",
+                    str(
+                        q.args["experiment/create_model/character_coverage"] or 0.99995
+                    ),
+                    "--input-sentence-size",
+                    str(q.args["experiment/create_model/input_sentence_size"] or 0),
+                    "--seed",
+                    str(q.args["experiment/create_model/tokenizer_seed"] or 42),
+                    "--num-threads",
+                    str(
+                        q.args["experiment/create_model/tokenizer_num_threads"]
+                        or max(1, os.cpu_count() or 1)
+                    ),
                 ]
+                if not bool(q.args["experiment/create_model/shuffle_input_sentence"]):
+                    tokenizer_cmd.append("--no-shuffle-input-sentence")
 
                 model_cmd = [
                     "python",
