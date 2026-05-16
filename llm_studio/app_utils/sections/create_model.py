@@ -40,7 +40,25 @@ async def create_model(q: Q) -> None:
     pretrained_tokenizer_model = (
         q.client["experiment/create_model/pretrained_tokenizer_model"] or ""
     )
-    max_lines = _client_value("experiment/create_model/max_lines", 500000)
+    max_lines = _client_value("experiment/create_model/max_lines", 0)
+    character_coverage = _client_value(
+        "experiment/create_model/character_coverage", 0.99995
+    )
+    input_sentence_size = _client_value(
+        "experiment/create_model/input_sentence_size", 0
+    )
+    tokenizer_seed = _client_value("experiment/create_model/tokenizer_seed", 42)
+    tokenizer_num_threads = _client_value(
+        "experiment/create_model/tokenizer_num_threads", max(1, os.cpu_count() or 1)
+    )
+    tokenizer_model_type = (
+        q.client["experiment/create_model/tokenizer_model_type"] or "bpe"
+    )
+    shuffle_input_sentence = bool(
+        q.client["experiment/create_model/shuffle_input_sentence"]
+        if "experiment/create_model/shuffle_input_sentence" in q.client
+        else True
+    )
     hidden_size = _client_value("experiment/create_model/hidden_size", 2048)
     intermediate_size = _client_value("experiment/create_model/intermediate_size", 8192)
     num_hidden_layers = _client_value("experiment/create_model/num_hidden_layers", 16)
@@ -152,6 +170,47 @@ async def create_model(q: Q) -> None:
                 name="experiment/create_model/max_lines",
                 label="Max sampled lines",
                 value=max_lines,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.dropdown(
+                name="experiment/create_model/tokenizer_model_type",
+                label="Tokenizer model type",
+                choices=[
+                    ui.choice(name="bpe", label="bpe"),
+                    ui.choice(name="unigram", label="unigram"),
+                ],
+                value=tokenizer_model_type,
+                required=True,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.textbox(
+                name="experiment/create_model/character_coverage",
+                label="Character coverage",
+                value=character_coverage,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.textbox(
+                name="experiment/create_model/input_sentence_size",
+                label="Input sentence size (0 = all)",
+                value=input_sentence_size,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.textbox(
+                name="experiment/create_model/tokenizer_seed",
+                label="Tokenizer seed",
+                value=tokenizer_seed,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.textbox(
+                name="experiment/create_model/tokenizer_num_threads",
+                label="Tokenizer threads",
+                value=tokenizer_num_threads,
+                disabled=use_pretrained_tokenizer,
+            ),
+            ui.toggle(
+                name="experiment/create_model/shuffle_input_sentence",
+                label="Shuffle input sentences",
+                value=shuffle_input_sentence,
                 disabled=use_pretrained_tokenizer,
             ),
             ui.text_l("Model architecture settings"),
