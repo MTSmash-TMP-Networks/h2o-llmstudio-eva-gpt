@@ -21,6 +21,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--tokenizer-src", default="./tokenizer_fast")
     p.add_argument("--out-dir", default="./eva-mini131k-eva_gpt-dense-fp32")
+    p.add_argument("--base-model", default="")
     p.add_argument("--orig-max-pos", type=int, default=8192)
     p.add_argument("--new-max-pos", type=int, default=131072)
     p.add_argument("--hidden-size", type=int, default=2048)
@@ -43,7 +44,11 @@ def main() -> None:
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token or tok.bos_token
 
-    cfg = AutoConfig.for_model("eva_gpt")
+    cfg = (
+        AutoConfig.from_pretrained(args.base_model)
+        if args.base_model
+        else AutoConfig.for_model("eva_gpt")
+    )
     cfg.vocab_size = len(tok)
     cfg.hidden_size = args.hidden_size
     cfg.intermediate_size = args.intermediate_size

@@ -67,6 +67,9 @@ async def create_model(q: Q) -> None:
     attn_implementation = (
         q.client["experiment/create_model/attn_implementation"] or "eager"
     )
+    pretrained_model_id = (
+        q.client["experiment/create_model/pretrained_model_id"] or ""
+    )
     dataset_value = q.client["experiment/create_model/dataset_id"]
     if not dataset_value and dataset_choices:
         dataset_value = dataset_choices[0].name
@@ -215,6 +218,12 @@ async def create_model(q: Q) -> None:
             ),
             ui.text_l("Model architecture settings"),
             ui.textbox(
+                name="experiment/create_model/pretrained_model_id",
+                label="Optional Hugging Face base model",
+                value=pretrained_model_id,
+                placeholder="z.B. meta-llama/Llama-3.2-1B",
+            ),
+            ui.textbox(
                 name="experiment/create_model/hidden_size",
                 label="Hidden size",
                 value=hidden_size,
@@ -267,7 +276,7 @@ async def create_model(q: Q) -> None:
             ui.text("1) Train tokenizer (or use pretrained Hugging Face tokenizer):"),
             ui.text("python scripts/create_model/train_tokenizer.py --csv <path-to-dataset.csv> --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
             ui.text("2) Initialize dense EvaGPT model:"),
-            ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast|<hf-model-id> --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
+            ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast|<hf-model-id> --base-model <hf-model-id optional> --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
             ui.separator(),
             ui.text_l("Next steps"),
             ui.text(

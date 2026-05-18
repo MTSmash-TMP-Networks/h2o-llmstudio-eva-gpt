@@ -312,6 +312,9 @@ async def handle(q: Q) -> None:
             q.client["experiment/create_model/num_key_value_heads"] = q.args[
                 "experiment/create_model/num_key_value_heads"
             ]
+            q.client["experiment/create_model/pretrained_model_id"] = (
+                q.args["experiment/create_model/pretrained_model_id"] or ""
+            ).strip()
             run_base_dir = os.path.join(
                 get_output_dir(q), f"{model_name}__create_model_work"
             )
@@ -373,6 +376,10 @@ async def handle(q: Q) -> None:
                 if not bool(q.args["experiment/create_model/shuffle_input_sentence"]):
                     tokenizer_cmd.append("--no-shuffle-input-sentence")
 
+                pretrained_model_id = (
+                    q.args["experiment/create_model/pretrained_model_id"] or ""
+                ).strip()
+
                 model_cmd = [
                     "python",
                     "scripts/create_model/initialize_eva_model.py",
@@ -393,6 +400,9 @@ async def handle(q: Q) -> None:
                     "--attn-implementation",
                     str(q.args["experiment/create_model/attn_implementation"] or "eager"),
                 ]
+                if pretrained_model_id:
+                    model_cmd.extend(["--base-model", pretrained_model_id])
+
                 model_log_path = os.path.join(run_base_dir, "create_model_init.log")
                 pipeline_steps = []
                 if use_pretrained_tokenizer:
