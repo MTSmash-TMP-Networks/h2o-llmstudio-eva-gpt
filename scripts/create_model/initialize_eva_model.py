@@ -1,9 +1,20 @@
 import argparse
 import os
 import shutil
+from pathlib import Path
 
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+
+def _copy_local_tokenizer_assets(tokenizer_src: str, out_dir: str) -> None:
+    src_path = Path(tokenizer_src)
+    if not src_path.is_dir():
+        return
+
+    for child in src_path.iterdir():
+        if child.is_file():
+            shutil.copy2(child, Path(out_dir) / child.name)
 
 
 def main() -> None:
@@ -66,6 +77,7 @@ def main() -> None:
     model.save_pretrained(args.out_dir, safe_serialization=True, max_shard_size="100GB")
     cfg.save_pretrained(args.out_dir)
     tok.save_pretrained(args.out_dir)
+    _copy_local_tokenizer_assets(args.tokenizer_src, args.out_dir)
 
 
 if __name__ == "__main__":
