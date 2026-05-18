@@ -37,9 +37,9 @@ def main() -> None:
     os.makedirs(args.out_dir, exist_ok=True)
 
     try:
-        tok = AutoTokenizer.from_pretrained(args.tokenizer_src, use_fast=False)
-    except Exception:
         tok = AutoTokenizer.from_pretrained(args.tokenizer_src, use_fast=True)
+    except Exception:
+        tok = AutoTokenizer.from_pretrained(args.tokenizer_src, use_fast=False)
 
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token or tok.bos_token
@@ -82,6 +82,22 @@ def main() -> None:
     model.save_pretrained(args.out_dir, safe_serialization=True, max_shard_size="100GB")
     cfg.save_pretrained(args.out_dir)
     tok.save_pretrained(args.out_dir)
+
+    # Ensure the model package contains canonical tokenizer metadata files
+    # even when source tokenizers provide custom/minimal configs.
+    special_tokens_map = {}
+    if tok.bos_token is not None:
+        special_tokens_map["bos_token"] = tok.bos_token
+    if tok.eos_token is not None:
+        special_tokens_map["eos_token"] = tok.eos_token
+    if tok.pad_token is not None:
+        special_tokens_map["pad_token"] = tok.pad_token
+    if special_tokens_map:
+        import json
+
+        with open(Path(args.out_dir) / "special_tokens_map.json", "w", encoding="utf-8") as f:
+            json.dump(special_tokens_map, f, indent=2)
+
     _copy_local_tokenizer_assets(args.tokenizer_src, args.out_dir)
 
 
