@@ -12,9 +12,31 @@ def _copy_local_tokenizer_assets(tokenizer_src: str, out_dir: str) -> None:
     if not src_path.is_dir():
         return
 
+    protected_files = {"tokenizer_config.json", "special_tokens_map.json"}
     for child in src_path.iterdir():
-        if child.is_file():
+        if child.is_file() and child.name not in protected_files:
             shutil.copy2(child, Path(out_dir) / child.name)
+
+
+def _normalize_tokenizer_config(out_dir: str) -> None:
+    cfg_path = Path(out_dir) / "tokenizer_config.json"
+    if not cfg_path.exists():
+        return
+
+    import json
+
+    with open(cfg_path, encoding="utf-8") as f:
+        cfg = json.load(f)
+
+    cfg.pop("backend", None)
+    cfg.pop("is_local", None)
+    cfg.pop("model_specific_special_tokens", None)
+
+    if cfg.get("tokenizer_class") == "TokenizersBackend":
+        cfg["tokenizer_class"] = "PreTrainedTokenizerFast"
+
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
 
 
 def main() -> None:
@@ -98,6 +120,7 @@ def main() -> None:
         with open(Path(args.out_dir) / "special_tokens_map.json", "w", encoding="utf-8") as f:
             json.dump(special_tokens_map, f, indent=2)
 
+    _normalize_tokenizer_config(args.out_dir)
     _copy_local_tokenizer_assets(args.tokenizer_src, args.out_dir)
 
 
