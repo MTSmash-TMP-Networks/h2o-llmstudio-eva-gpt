@@ -205,7 +205,7 @@ def main() -> None:
     with open("tokenizer_config.json", "w", encoding="utf-8") as f:
         json.dump(tok_cfg, f, indent=2)
     with open("special_tokens_map.json", "w", encoding="utf-8") as f:
-        json.dump({k: {"content": v} for k, v in tok_cfg.items() if k.endswith("_token")}, f, indent=2)
+        json.dump({k: v for k, v in tok_cfg.items() if k.endswith("_token")}, f, indent=2)
 
     os.makedirs(args.tokenizer_dir, exist_ok=True)
     for fn in [f"{args.model_prefix}.model", f"{args.model_prefix}.vocab", "tokenizer_config.json", "special_tokens_map.json"]:
