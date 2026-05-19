@@ -3,17 +3,17 @@ language:
 - en
 library_name: transformers
 inference: false
-thumbnail: https://h2o.ai/etc.clientlibs/h2o/clientlibs/clientlib-site/resources/images/favicon.ico
+thumbnail: https://matelix.com/favicon.ico
 tags:
 - gpt
 - llm
 - large language model
-- h2o-llmstudio
+- matelix-ai
 ---
 # Model Card
 ## Summary
 
-This model was trained using [H2O LLM Studio](https://github.com/h2oai/h2o-llmstudio).
+This model was trained using [MaTeLiX AI](https://github.com/MTSmash-TMP-Networks/h2o-llmstudio-eva-gpt).
 - Base model: [{{base_model}}](https://huggingface.co/{{base_model}})
 
 
@@ -79,7 +79,7 @@ You can load the models using quantization by specifying ```load_in_8bit=True```
 
 ## Model Configuration
 
-This model was trained using H2O LLM Studio and with the configuration in [cfg.yaml](cfg.yaml). Visit [H2O LLM Studio](https://github.com/h2oai/h2o-llmstudio) to learn how to train your own large language models.
+This model was trained using MaTeLiX AI and with the configuration in [cfg.yaml](cfg.yaml). Visit [MaTeLiX AI](https://github.com/MTSmash-TMP-Networks/h2o-llmstudio-eva-gpt) to learn how to train your own large language models.
 
 
 ## Disclaimer

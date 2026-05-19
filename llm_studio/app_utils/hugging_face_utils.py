@@ -34,7 +34,7 @@ def get_model_card(cfg, model, repo_id) -> huggingface_hub.ModelCard:
     card_data = huggingface_hub.ModelCardData(
         language="en",
         library_name="transformers",
-        tags=["gpt", "llm", "large language model", "h2o-llmstudio"],
+        tags=["gpt", "llm", "large language model", "matelix-ai"],
     )
     cfg_kwargs = dict(
         text_prompt_start=cfg.dataset.text_prompt_start,
