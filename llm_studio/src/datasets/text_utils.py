@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 def get_texts(df: DataFrame, cfg: DefaultConfigProblemBase):
     if isinstance(cfg.dataset.prompt_column, str):
         # single column dataset
-        texts = df[cfg.dataset.prompt_column].astype(str)
+        texts = df[cfg.dataset.prompt_column].fillna("").astype(str)
         texts = texts.values
     else:
         # multi-column dataset - prepend (if necessary) and join
         columns = list(cfg.dataset.prompt_column)
 
         for column in columns:
-            df[column] = df[column].astype(str)
+            df[column] = df[column].fillna("").astype(str)
 
         join_str = codecs.decode(cfg.dataset.prompt_column_separator, "unicode_escape")
 

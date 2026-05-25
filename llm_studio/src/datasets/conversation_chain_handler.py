@@ -137,13 +137,13 @@ class ConversationChainHandler:
             answers = []
             for col in answer_column:
                 if col in df.columns:
-                    answers.append(df[col].astype(str).tolist())
+                    answers.append(df[col].fillna("").astype(str).tolist())
                 else:
                     answers.append(["" for _ in range(len(self.prompts))])
             answers = [",".join(ans) for ans in zip(*answers, strict=False)]
         else:
             if answer_column in df.columns:
-                answers = df[answer_column].astype(str).tolist()
+                answers = df[answer_column].fillna("").astype(str).tolist()
             else:
                 answers = ["" for _ in range(len(self.prompts))]
         return answers
@@ -157,7 +157,7 @@ class ConversationChainHandler:
                 )
                 systems = ["" for _ in range(len(self.prompts))]
             else:
-                systems = df[cfg.dataset.system_column].astype(str).tolist()
+                systems = df[cfg.dataset.system_column].fillna("").astype(str).tolist()
         else:
             systems = ["" for _ in range(len(self.prompts))]
         return systems
