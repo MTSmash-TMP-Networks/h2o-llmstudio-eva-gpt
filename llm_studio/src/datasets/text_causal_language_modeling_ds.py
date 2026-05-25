@@ -492,6 +492,8 @@ class CustomDataset(Dataset):
         if self.mode == "train":
             encodings = self.augment_data(encodings)
 
+        encodings = self._trim_encodings_to_max_length(encodings)
+
         system_encoding = encodings[0][0]
         prompt_encodings = [encoding[1] for encoding in encodings]
         answer_encodings = [encoding[2] for encoding in encodings]
@@ -502,6 +504,21 @@ class CustomDataset(Dataset):
             prompt_encodings,
             answer_encodings,
         )
+
+    def _trim_encodings_to_max_length(self, encodings: list[list[torch.Tensor]]):
+        """
+        Trim oldest conversation turns so the concatenated prompt/answer tokens fit
+        into tokenizer.max_length as much as possible before final padding/truncation.
+        """
+        max_length = self.cfg.tokenizer.max_length
+        start_idx = 0
+        total_len = sum(len(prompt) + len(answer) for _, prompt, answer in encodings)
+        while start_idx < len(encodings) - 1 and total_len > max_length:
+            _, prompt, answer = encodings[start_idx]
+            total_len -= len(prompt) + len(answer)
+            start_idx += 1
+
+        return encodings[start_idx:]
 
     def augment_data(self, encodings):
         parent_encodings = encodings[:-1]

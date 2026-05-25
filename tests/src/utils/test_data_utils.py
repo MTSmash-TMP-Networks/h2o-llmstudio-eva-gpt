@@ -122,6 +122,35 @@ def test_oasst_data_automatic_split(tmp_path: pathlib.Path):
                 )
 
 
+def test_conversation_handler_replaces_nan_in_prompt_answer_and_system():
+    cfg_mock = MagicMock()
+    cfg_mock.dataset.parent_id_column = "None"
+    cfg_mock.dataset.prompt_column = ("prompt_1", "prompt_2")
+    cfg_mock.dataset.prompt_column_separator = "\\n"
+    cfg_mock.dataset.answer_column = "answer"
+    cfg_mock.dataset.system_column = "system"
+
+    df = pd.DataFrame(
+        {
+            "prompt_1": ["Hallo", None],
+            "prompt_2": ["Welt", "Test"],
+            "answer": ["Antwort", None],
+            "system": [None, "sys"],
+        }
+    )
+
+    handler = ConversationChainHandler(df=df, cfg=cfg_mock)
+    sample0 = handler[0]
+    sample1 = handler[1]
+
+    assert sample0["prompts"] == ["Hallo\nWelt"]
+    assert sample1["prompts"] == ["\nTest"]
+    assert sample0["answers"] == ["Antwort"]
+    assert sample1["answers"] == [""]
+    assert sample0["systems"] == [""]
+    assert sample1["systems"] == ["sys"]
+
+
 class TestReadDataframe:
     """Tests for read_dataframe function covering file ingestion."""
 
