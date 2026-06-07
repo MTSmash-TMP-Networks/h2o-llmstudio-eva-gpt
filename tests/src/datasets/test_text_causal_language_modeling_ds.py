@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from llm_studio.app_utils.default_datasets import (
     prepare_default_dataset_causal_language_modeling,
@@ -220,8 +221,7 @@ def test_getitem():
 
     assert (
         dataset.tokenizer.decode(result["input_ids"], skip_special_tokens=False)
-        == "<|endoftext|>" * 475
-        + "System:system 1"
+        == "<|endoftext|>" * 475 + "System:system 1"
         "<|endoftext|>"
         "Prompt:prompt 1"
         "<|endoftext|>"
@@ -445,3 +445,71 @@ def test_preprocess_dataframe_no_personalize():
     assert not df_processed["answer"].str.contains("H2O.ai").any()
 
     assert df_processed.equals(df)
+
+
+class CharacterTokenizer:
+    pad_token_id = 0
+
+    def __call__(self, text, return_tensors=None, add_special_tokens=False):
+        input_ids = torch.arange(1, len(text) + 1, dtype=torch.long)
+        return {
+            "input_ids": input_ids.unsqueeze(0),
+            "attention_mask": torch.ones(1, len(text), dtype=torch.long),
+        }
+
+
+def make_long_sample_cfg(long_sample_strategy="Truncate", sliding_window_overlap=0):
+    return ConfigProblemBase(
+        llm_backbone="unit-test",
+        dataset=ConfigNLPCausalLMDataset(
+            system_column="None",
+            prompt_column=("prompt",),
+            answer_column="answer",
+            text_prompt_start="",
+            text_answer_separator="",
+            add_eos_token_to_prompt=False,
+            add_eos_token_to_answer=False,
+        ),
+        tokenizer=ConfigNLPCausalLMTokenizer(
+            max_length=10,
+            long_sample_strategy=long_sample_strategy,
+            sliding_window_overlap=sliding_window_overlap,
+        ),
+    )
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_skip_long_samples_in_training(mock_get_tokenizer):
+    mock_get_tokenizer.return_value = CharacterTokenizer()
+    df = pd.DataFrame(
+        {
+            "prompt": ["short", "this prompt is too long"],
+            "answer": ["ok", "this answer is also too long"],
+        }
+    )
+    dataset = CustomDataset(
+        df, make_long_sample_cfg(long_sample_strategy="Skip"), mode="train"
+    )
+
+    assert len(dataset) == 1
+    assert dataset.sample_index == [(0, None)]
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_sliding_window_expands_long_training_samples(mock_get_tokenizer):
+    mock_get_tokenizer.return_value = CharacterTokenizer()
+    df = pd.DataFrame({"prompt": ["12345"], "answer": ["abcdefghi"]})
+    dataset = CustomDataset(
+        df,
+        make_long_sample_cfg(
+            long_sample_strategy="Sliding Window", sliding_window_overlap=2
+        ),
+        mode="train",
+    )
+
+    assert dataset.sample_index == [(0, 0), (0, 4)]
+    assert len(dataset) == 2
+    first_sample = dataset[0]
+    second_sample = dataset[1]
+    assert first_sample["attention_mask"].sum() == 10
+    assert second_sample["attention_mask"].sum() == 10

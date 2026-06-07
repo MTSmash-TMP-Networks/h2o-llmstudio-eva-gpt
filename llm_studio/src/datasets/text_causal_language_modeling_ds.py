@@ -29,12 +29,66 @@ class CustomDataset(Dataset):
         self.df = df.copy()
         self.tokenizer = get_tokenizer(self.cfg)
         self.conversation_chain_handler = ConversationChainHandler(self.df, cfg)
+        self.sample_index = self._build_sample_index()
 
     def __len__(self) -> int:
-        return len(self.conversation_chain_handler)
+        return len(self.sample_index)
 
-    def __getitem__(self, idx: int) -> dict:
-        """Reads a single text observation."""
+    def _build_sample_index(self) -> list[tuple[int, int | None]]:
+        """Build index entries for truncation, skip, and sliding-window modes."""
+        strategy = getattr(self.cfg.tokenizer, "long_sample_strategy", "Truncate")
+        if strategy not in ["Truncate", "Sliding Window", "Skip"]:
+            strategy = "Truncate"
+        max_length = self.cfg.tokenizer.max_length
+        sample_index: list[tuple[int, int | None]] = []
+
+        if self.mode != "train" or strategy == "Truncate":
+            return [(idx, None) for idx in range(len(self.conversation_chain_handler))]
+
+        skipped_samples = 0
+        created_windows = 0
+        for idx in range(len(self.conversation_chain_handler)):
+            input_ids, _, _, _ = self._get_input_ids_labels_and_encodings(
+                idx, augment=False
+            )
+            sample_length = len(input_ids)
+
+            if sample_length <= max_length:
+                sample_index.append((idx, None))
+            elif strategy == "Skip":
+                skipped_samples += 1
+            elif strategy == "Sliding Window":
+                overlap = min(
+                    max(getattr(self.cfg.tokenizer, "sliding_window_overlap", 0), 0),
+                    max_length - 1,
+                )
+                stride = max_length - overlap
+                starts = list(range(0, sample_length - max_length + 1, stride))
+                last_start = sample_length - max_length
+                if starts[-1] != last_start:
+                    starts.append(last_start)
+                sample_index.extend((idx, start) for start in starts)
+                created_windows += len(starts)
+            else:
+                sample_index.append((idx, None))
+
+        if strategy == "Skip":
+            logger.info(
+                "Skipped %s train samples longer than tokenizer.max_length=%s.",
+                skipped_samples,
+                max_length,
+            )
+        elif strategy == "Sliding Window":
+            logger.info(
+                "Created %s sliding-window train samples from long samples with "
+                "tokenizer.max_length=%s.",
+                created_windows,
+                max_length,
+            )
+
+        return sample_index
+
+    def _prepare_input_text_dict(self, idx: int) -> dict[str, list[str]]:
         input_text_dict = self.conversation_chain_handler[idx]
         input_text_dict["systems"] = [
             self.parse_system(self.cfg, system) for system in input_text_dict["systems"]
@@ -45,12 +99,15 @@ class CustomDataset(Dataset):
         input_text_dict["answers"] = [
             self.parse_answer(self.cfg, answer) for answer in input_text_dict["answers"]
         ]
+        return input_text_dict
 
-        sample = dict()
-        system_encoding, prompt_encodings, answer_encodings = self.get_encodings(
-            input_text_dict=input_text_dict
+    def _get_input_ids_labels_and_encodings(
+        self, idx: int, augment: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+        input_text_dict = self._prepare_input_text_dict(idx)
+        _, prompt_encodings, answer_encodings = self.get_encodings(
+            input_text_dict=input_text_dict, augment=augment
         )
-
         input_ids = torch.cat(
             [
                 torch.cat([prompt_encoding, answer_encoding])
@@ -59,8 +116,29 @@ class CustomDataset(Dataset):
                 )
             ]
         )
+        labels = self._get_raw_labels(prompt_encodings, answer_encodings)
+        return input_ids, labels, prompt_encodings, answer_encodings
 
-        sample.update(self.get_labels(prompt_encodings, answer_encodings))
+    def __getitem__(self, idx: int) -> dict:
+        """Reads a single text observation."""
+        original_idx, window_start = self.sample_index[idx]
+        use_long_sample_windows = (
+            self.mode == "train"
+            and getattr(self.cfg.tokenizer, "long_sample_strategy", "Truncate")
+            == "Sliding Window"
+        )
+        input_ids, labels, prompt_encodings, answer_encodings = (
+            self._get_input_ids_labels_and_encodings(
+                original_idx, augment=not use_long_sample_windows
+            )
+        )
+
+        if window_start is not None:
+            window_end = window_start + self.cfg.tokenizer.max_length
+            input_ids = input_ids[window_start:window_end]
+            labels = labels[window_start:window_end]
+
+        sample = self.pad_labels(labels, self.cfg.tokenizer.max_length)
         sample.update(
             self.pad_tokens(
                 input_ids,
@@ -331,9 +409,9 @@ class CustomDataset(Dataset):
         Quick check whether Dataframe and configurations are correctly set.
         """
         if cfg.dataset.parent_id_column != "None":
-            assert cfg.dataset.id_column != cfg.dataset.parent_id_column, (
-                "'Id Column' should be different from 'Parent column'"
-            )
+            assert (
+                cfg.dataset.id_column != cfg.dataset.parent_id_column
+            ), "'Id Column' should be different from 'Parent column'"
 
         if (
             cfg.dataset.parent_id_column is not None
@@ -366,9 +444,9 @@ class CustomDataset(Dataset):
             " contains missing values."
         )
         if cfg.dataset.parent_id_column != "None":
-            assert cfg.dataset.id_column in df.columns, (
-                "When using Parent Column, set 'Id Column' in the previous screen. "
-            )
+            assert (
+                cfg.dataset.id_column in df.columns
+            ), "When using Parent Column, set 'Id Column' in the previous screen. "
 
         if (
             cfg.dataset.parent_id_column != "None"
@@ -431,7 +509,7 @@ class CustomDataset(Dataset):
             for id_ in id_list:
                 find_ancestor(id_, parent_map)
 
-    def get_labels(self, prompt_encodings, answer_encodings):
+    def _get_raw_labels(self, prompt_encodings, answer_encodings):
         labels = torch.cat(
             [
                 torch.cat([prompt_encoding, answer_encoding])
@@ -462,14 +540,24 @@ class CustomDataset(Dataset):
                 masks.append(torch.cat(mask))
             masks = torch.cat(masks).to(torch.bool)
             labels.masked_fill_(masks, -100)
-        if self.cfg.tokenizer.max_length < len(labels):
-            labels = labels[-self.cfg.tokenizer.max_length :]
+        return labels
 
-        sample = dict(labels=torch.full((self.cfg.tokenizer.max_length,), -100))
+    def get_labels(self, prompt_encodings, answer_encodings):
+        labels = self._get_raw_labels(prompt_encodings, answer_encodings)
+        return self.pad_labels(labels, self.cfg.tokenizer.max_length)
+
+    @staticmethod
+    def pad_labels(labels: torch.Tensor, max_length: int):
+        if max_length < len(labels):
+            labels = labels[-max_length:]
+
+        sample = dict(labels=torch.full((max_length,), -100))
         sample["labels"][-len(labels) :] = labels
         return sample
 
-    def get_encodings(self, input_text_dict: dict[str, list[str]]):
+    def get_encodings(
+        self, input_text_dict: dict[str, list[str]], augment: bool = True
+    ):
         """
         Get encodings for a single conversation history.
         Args:
@@ -489,7 +577,7 @@ class CustomDataset(Dataset):
             )
         ]
 
-        if self.mode == "train":
+        if self.mode == "train" and augment:
             encodings = self.augment_data(encodings)
 
         encodings = self._trim_encodings_to_max_length(encodings)
