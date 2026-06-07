@@ -340,6 +340,8 @@ class ConfigNLPCausalLMTraining(DefaultConfig):
 @dataclass
 class ConfigNLPCausalLMTokenizer(DefaultConfig):
     max_length: int = 512
+    long_sample_strategy: str = "Truncate"
+    sliding_window_overlap: int = 0
     add_prompt_answer_tokens: bool = False
     padding_quantile: float = 1.0
     tokenizer_kwargs: str = '{"use_fast": true, "add_prefix_space": false}'
@@ -351,11 +353,29 @@ class ConfigNLPCausalLMTokenizer(DefaultConfig):
     def __post_init__(self):
         super().__post_init__()
         self._possible_values["max_length"] = (32, 1024 * 16, 32)
+        self._possible_values["long_sample_strategy"] = possible_values.String(
+            values=(
+                ("Truncate", "Truncate long samples"),
+                ("Sliding Window", "Use sliding window"),
+                ("Skip", "Skip long samples"),
+            ),
+            allow_custom=False,
+        )
+        self._possible_values["sliding_window_overlap"] = (0, 1024 * 16, 32)
         self._possible_values["padding_quantile"] = (0, 1, 0.01)
 
         self._grid_search_values["max_length"] = (256, 512, 1024)
 
         self._grid_search_iscustom["max_length"] = True
+
+        self._nesting.add(
+            ["sliding_window_overlap"],
+            [
+                Dependency(
+                    key="long_sample_strategy", value="Sliding Window", is_set=True
+                )
+            ],
+        )
 
         self._padding_side = "left"
 
