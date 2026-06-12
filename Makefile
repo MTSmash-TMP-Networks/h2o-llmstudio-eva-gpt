@@ -2,6 +2,9 @@ SHELL := /bin/bash
 
 UV ?= uv
 RUN ?= $(UV) run
+# Runtime targets must not auto-sync, because setup may install the latest
+# EVA GPT transformers branch tip after the frozen lockfile sync.
+RUN_NO_SYNC ?= $(UV) run --no-sync
 PWD = $(shell pwd)
 DOCKER_IMAGE ?= h2oairelease/h2oai-llmstudio-app:nightly
 APP_VERSION=$(shell sed -n 's/^version = //p' pyproject.toml | tr -d '"')
@@ -171,7 +174,7 @@ wave: patch-wave-theme
 	H2O_WAVE_MAX_REQUEST_SIZE=25MB \
 	H2O_WAVE_NO_LOG=true \
 	H2O_WAVE_PRIVATE_DIR="/download/@$(WORKDIR)/output/download" \
-	$(UV) run wave run llm_studio.app
+	$(RUN_NO_SYNC) wave run llm_studio.app
 
 .PHONY: llmstudio
 llmstudio: patch-wave-theme
@@ -180,7 +183,7 @@ llmstudio: patch-wave-theme
 	H2O_WAVE_MAX_REQUEST_SIZE=25MB \
 	H2O_WAVE_NO_LOG=true \
 	H2O_WAVE_PRIVATE_DIR="/download/@$(WORKDIR)/output/download" \
-	$(UV) run wave run --no-reload llm_studio.app
+	$(RUN_NO_SYNC) wave run --no-reload llm_studio.app
 
 .PHONY: stop-llmstudio
 stop-llmstudio:
