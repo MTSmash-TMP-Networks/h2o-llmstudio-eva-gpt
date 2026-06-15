@@ -78,6 +78,23 @@ from llm_studio.src.utils.utils import (
 logger = logging.getLogger(__name__)
 
 
+def is_optimizer_update_step(
+    itr: int, epoch_steps: int, grad_accumulation: int
+) -> bool:
+    """Return whether a mini-batch should trigger an optimizer update."""
+    return (itr + 1) % grad_accumulation == 0 or (itr + 1) == epoch_steps
+
+
+def count_optimizer_update_steps_per_epoch(
+    epoch_steps: int, grad_accumulation: int
+) -> int:
+    """Return optimizer updates per epoch using the train-loop step logic."""
+    return sum(
+        is_optimizer_update_step(itr, epoch_steps, grad_accumulation)
+        for itr in range(epoch_steps)
+    )
+
+
 def run_eval(
     cfg: DefaultConfigProblemBase,
     model: torch.nn.Module,
@@ -289,8 +306,12 @@ def run_train(
                 plot = cfg.logging.plots_class.plot_batch(batch=batch, cfg=cfg)
                 log_plot(cfg, plot, "train_data")
 
-            # only need to sync gradients at last step of grad accumulation
-            model.require_backward_grad_sync = itr % cfg.training.grad_accumulation == 0
+            is_update_step = is_optimizer_update_step(
+                itr, epoch_steps, cfg.training.grad_accumulation
+            )
+
+            # Only need to sync gradients at true optimizer update steps.
+            model.require_backward_grad_sync = is_update_step
 
             # Forward pass
             with autocast(
@@ -323,7 +344,7 @@ def run_train(
                 and not cfg.environment.use_deepspeed
             ):
                 scaler.scale(loss).backward()  # type: ignore
-                if itr % cfg.training.grad_accumulation == 0:
+                if is_update_step:
                     if cfg.training.gradient_clip > 0:
                         scaler.unscale_(optimizer)  # type: ignore
                         torch.nn.utils.clip_grad_norm_(
@@ -337,18 +358,21 @@ def run_train(
                     model.backward(loss)  # type: ignore[operator]
                 else:
                     loss.backward()
-                if itr % cfg.training.grad_accumulation == 0:
+                if is_update_step:
                     if cfg.training.gradient_clip > 0:
                         torch.nn.utils.clip_grad_norm_(
                             model.parameters(), cfg.training.gradient_clip
                         )
+                    # DeepSpeed receives gradient_accumulation_steps in its config,
+                    # but this loop still owns the explicit optimizer/scheduler calls,
+                    # so gate them on the same true update-step boundary.
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
             if cfg.environment._distributed:
                 torch.cuda.synchronize(device=cfg.environment._local_rank)
 
-            if scheduler is not None:
+            if is_update_step and scheduler is not None:
                 scheduler.step()
 
             if cfg.environment._local_rank == 0:
@@ -617,8 +641,13 @@ def run(cfg: DefaultConfigProblemBase) -> float:
     model.to(cfg.environment._device)
 
     epoch_steps = len(train_dataloader)
+    optimizer_update_steps_per_epoch = count_optimizer_update_steps_per_epoch(
+        epoch_steps, cfg.training.grad_accumulation
+    )
     optimizer = get_optimizer(model=model, cfg=cfg)
-    scheduler = get_scheduler(cfg=cfg, optimizer=optimizer, epoch_steps=epoch_steps)
+    scheduler = get_scheduler(
+        cfg=cfg, optimizer=optimizer, epoch_steps=optimizer_update_steps_per_epoch
+    )
 
     if cfg.environment._distributed:
         (
