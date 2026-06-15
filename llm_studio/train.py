@@ -85,6 +85,16 @@ def is_optimizer_update_step(
     return (itr + 1) % grad_accumulation == 0 or (itr + 1) == epoch_steps
 
 
+def count_optimizer_update_steps_per_epoch(
+    epoch_steps: int, grad_accumulation: int
+) -> int:
+    """Return optimizer updates per epoch using the train-loop step logic."""
+    return sum(
+        is_optimizer_update_step(itr, epoch_steps, grad_accumulation)
+        for itr in range(epoch_steps)
+    )
+
+
 def run_eval(
     cfg: DefaultConfigProblemBase,
     model: torch.nn.Module,
@@ -631,8 +641,13 @@ def run(cfg: DefaultConfigProblemBase) -> float:
     model.to(cfg.environment._device)
 
     epoch_steps = len(train_dataloader)
+    optimizer_update_steps_per_epoch = count_optimizer_update_steps_per_epoch(
+        epoch_steps, cfg.training.grad_accumulation
+    )
     optimizer = get_optimizer(model=model, cfg=cfg)
-    scheduler = get_scheduler(cfg=cfg, optimizer=optimizer, epoch_steps=epoch_steps)
+    scheduler = get_scheduler(
+        cfg=cfg, optimizer=optimizer, epoch_steps=optimizer_update_steps_per_epoch
+    )
 
     if cfg.environment._distributed:
         (
