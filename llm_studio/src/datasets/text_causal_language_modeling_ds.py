@@ -49,7 +49,7 @@ class CustomDataset(Dataset):
         created_windows = 0
         for idx in range(len(self.conversation_chain_handler)):
             input_ids, _, _, _ = self._get_input_ids_labels_and_encodings(
-                idx, augment=False
+                idx, augment=False, trim_to_max_length=False
             )
             sample_length = len(input_ids)
 
@@ -102,11 +102,13 @@ class CustomDataset(Dataset):
         return input_text_dict
 
     def _get_input_ids_labels_and_encodings(
-        self, idx: int, augment: bool = True
+        self, idx: int, augment: bool = True, trim_to_max_length: bool = True
     ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
         input_text_dict = self._prepare_input_text_dict(idx)
         _, prompt_encodings, answer_encodings = self.get_encodings(
-            input_text_dict=input_text_dict, augment=augment
+            input_text_dict=input_text_dict,
+            augment=augment,
+            trim_to_max_length=trim_to_max_length,
         )
         input_ids = torch.cat(
             [
@@ -129,7 +131,9 @@ class CustomDataset(Dataset):
         )
         input_ids, labels, prompt_encodings, answer_encodings = (
             self._get_input_ids_labels_and_encodings(
-                original_idx, augment=not use_long_sample_windows
+                original_idx,
+                augment=not use_long_sample_windows,
+                trim_to_max_length=not use_long_sample_windows,
             )
         )
 
@@ -409,9 +413,9 @@ class CustomDataset(Dataset):
         Quick check whether Dataframe and configurations are correctly set.
         """
         if cfg.dataset.parent_id_column != "None":
-            assert (
-                cfg.dataset.id_column != cfg.dataset.parent_id_column
-            ), "'Id Column' should be different from 'Parent column'"
+            assert cfg.dataset.id_column != cfg.dataset.parent_id_column, (
+                "'Id Column' should be different from 'Parent column'"
+            )
 
         if (
             cfg.dataset.parent_id_column is not None
@@ -444,9 +448,9 @@ class CustomDataset(Dataset):
             " contains missing values."
         )
         if cfg.dataset.parent_id_column != "None":
-            assert (
-                cfg.dataset.id_column in df.columns
-            ), "When using Parent Column, set 'Id Column' in the previous screen. "
+            assert cfg.dataset.id_column in df.columns, (
+                "When using Parent Column, set 'Id Column' in the previous screen. "
+            )
 
         if (
             cfg.dataset.parent_id_column != "None"
@@ -556,7 +560,10 @@ class CustomDataset(Dataset):
         return sample
 
     def get_encodings(
-        self, input_text_dict: dict[str, list[str]], augment: bool = True
+        self,
+        input_text_dict: dict[str, list[str]],
+        augment: bool = True,
+        trim_to_max_length: bool = True,
     ):
         """
         Get encodings for a single conversation history.
@@ -580,7 +587,8 @@ class CustomDataset(Dataset):
         if self.mode == "train" and augment:
             encodings = self.augment_data(encodings)
 
-        encodings = self._trim_encodings_to_max_length(encodings)
+        if trim_to_max_length:
+            encodings = self._trim_encodings_to_max_length(encodings)
 
         system_encoding = encodings[0][0]
         prompt_encodings = [encoding[1] for encoding in encodings]
