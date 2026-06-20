@@ -80,6 +80,15 @@ def check_for_common_errors(cfg: DefaultConfigProblemBase) -> dict:
         ]
         errors["type"].append("error")
 
+    if cfg.training.lora and not cfg.architecture.pretrained:
+        errors["title"] += ["LoRA without pretrained weights."]
+        errors["message"] += [
+            "LoRA freezes the base model and only trains adapter weights. "
+            "For training a model from scratch, please disable LoRA so all "
+            "model weights are trainable."
+        ]
+        errors["type"].append("error")
+
     if (
         not cfg.training.lora
         and cfg.architecture.backbone_dtype not in ["bfloat16", "float32"]
