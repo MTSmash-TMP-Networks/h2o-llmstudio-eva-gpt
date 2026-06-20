@@ -15,6 +15,7 @@ from llm_studio.src.utils.data_utils import (
     is_valid_data_frame,
     load_train_valid_data,
     read_dataframe,
+    sample_data,
 )
 
 
@@ -149,6 +150,49 @@ def test_conversation_handler_replaces_nan_in_prompt_answer_and_system():
     assert sample1["answers"] == [""]
     assert sample0["systems"] == [""]
     assert sample1["systems"] == ["sys"]
+
+
+def test_conversation_handler_treats_empty_parent_id_as_missing():
+    cfg_mock = MagicMock()
+    cfg_mock.dataset.parent_id_column = "parent_id"
+    cfg_mock.dataset.id_column = "id"
+    cfg_mock.dataset.limit_chained_samples = False
+    cfg_mock.dataset.prompt_column = "prompt"
+    cfg_mock.dataset.answer_column = "answer"
+    cfg_mock.dataset.system_column = "None"
+
+    df = pd.DataFrame(
+        {
+            "id": ["", "child"],
+            "parent_id": ["", ""],
+            "prompt": ["Root", "Child"],
+            "answer": ["Answer root", "Answer child"],
+        }
+    )
+
+    handler = ConversationChainHandler(df=df, cfg=cfg_mock)
+
+    assert handler.conversation_chain_ids == [[0], [1]]
+
+
+def test_sample_data_treats_empty_parent_id_as_missing():
+    cfg_mock = MagicMock()
+    cfg_mock.dataset.parent_id_column = "parent_id"
+    cfg_mock.dataset.data_sample = 1.0
+
+    df = pd.DataFrame(
+        {
+            "id": ["", "child"],
+            "parent_id": ["", ""],
+            "prompt": ["Root", "Child"],
+            "answer": ["Answer root", "Answer child"],
+        }
+    )
+
+    sampled_df = sample_data(cfg_mock, df)
+
+    assert len(sampled_df) == 2
+    assert "root_id" not in sampled_df.columns
 
 
 class TestReadDataframe:

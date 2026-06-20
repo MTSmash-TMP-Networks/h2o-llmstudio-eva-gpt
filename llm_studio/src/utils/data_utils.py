@@ -188,14 +188,26 @@ def sample_data(cfg: DefaultConfigProblemBase, df: pd.DataFrame) -> pd.DataFrame
     """Sample data from the dataframe"""
 
     if cfg.dataset.parent_id_column != "None" and "id" in df.columns:
-        parent_mapping = df.set_index("id")["parent_id"].to_dict()
+        parent_mapping = df.set_index("id")[cfg.dataset.parent_id_column].to_dict()
 
         # A recursive function to get the root id for each node
-        def get_root(node):
+        def get_root(node, visited_nodes=None):
+            if visited_nodes is None:
+                visited_nodes = set()
+            if node in visited_nodes:
+                raise ValueError(
+                    f"Parent chain of sample with id {node} is circular. "
+                    f"Please ensure that parent chain is not circular."
+                )
+            visited_nodes.add(node)
             parent = parent_mapping.get(node)
-            if parent is None or pd.isna(parent):
+            if (
+                parent is None
+                or pd.isna(parent)
+                or (isinstance(parent, str) and parent.strip() in ["", "None"])
+            ):
                 return node
-            return get_root(parent)
+            return get_root(parent, visited_nodes)
 
         # Apply the function to assign each row the root id
         df["root_id"] = df["id"].apply(get_root)
