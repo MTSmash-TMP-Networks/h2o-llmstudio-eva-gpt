@@ -87,3 +87,27 @@ def test_sliding_window_indexes_untrimmed_conversation_turns():
     assert "a1" in trained_label_text
     assert "a2" in trained_label_text
     assert "a3" in trained_label_text
+
+
+def test_sliding_window_train_insight_prompt_matches_window_context():
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2", "3"],
+            "parent_id": ["None", "1", "2"],
+            "prompt": ["p1", "p2", "p3"],
+            "answer": ["a1", "a2", "a3"],
+        }
+    )
+
+    with patch(
+        "llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer",
+        return_value=CharacterTokenizer(),
+    ):
+        dataset = CustomDataset(df, _cfg(), mode="train")
+
+    second_window = dataset[len(dataset) - 1]
+    prompt_tokens = second_window["prompt_input_ids"][
+        second_window["prompt_attention_mask"].bool()
+    ]
+
+    assert "".join(chr(token) for token in prompt_tokens.tolist()) == "p2 p3 "
