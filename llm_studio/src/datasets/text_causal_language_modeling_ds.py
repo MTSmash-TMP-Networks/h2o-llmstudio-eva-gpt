@@ -164,16 +164,24 @@ class CustomDataset(Dataset):
             )
         )
 
-        # Remove last answer from encoding to create the prompt for inference
-        answer_encodings[-1] = torch.empty(0)
-        prompt_input_ids = torch.cat(
-            [
-                torch.cat([prompt_encoding, answer_encoding])
-                for prompt_encoding, answer_encoding in zip(
-                    prompt_encodings, answer_encodings, strict=False
-                )
-            ]
-        )
+        if window_start is not None:
+            # For sliding-window train samples, the train-data insight table should
+            # describe the same token window that is actually trained on.  The
+            # regular inference prompt (full conversation with the last answer
+            # removed) can be unrelated to a specific window and makes the GUI
+            # show prompt/answer text that does not match the tokenized text.
+            prompt_input_ids = input_ids[labels == -100]
+        else:
+            # Remove last answer from encoding to create the prompt for inference
+            answer_encodings[-1] = torch.empty(0)
+            prompt_input_ids = torch.cat(
+                [
+                    torch.cat([prompt_encoding, answer_encoding])
+                    for prompt_encoding, answer_encoding in zip(
+                        prompt_encodings, answer_encodings, strict=False
+                    )
+                ]
+            )
         sample.update(
             self.pad_tokens(
                 prompt_input_ids,
