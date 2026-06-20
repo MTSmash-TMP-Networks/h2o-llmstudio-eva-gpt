@@ -228,6 +228,11 @@ async def handle(q: Q) -> None:
                 q.args["experiment/create_model/use_pretrained_tokenizer"]
             )
             await create_model(q)
+        elif q.args.__wave_submission_name__ == "experiment/create_model/source_type":
+            q.client["experiment/create_model/source_type"] = (
+                q.args["experiment/create_model/source_type"] or "uploaded"
+            )
+            await create_model(q)
         elif q.args.__wave_submission_name__ == "experiment/create_model/logs":
             await create_model_logs(q)
         elif (
@@ -262,6 +267,20 @@ async def handle(q: Q) -> None:
         elif q.args.__wave_submission_name__ == "experiment/create_model/start_pipeline":
             dataset_id = q.args["experiment/create_model/dataset_id"]
             q.client["experiment/create_model/dataset_id"] = dataset_id
+            source_type = q.args["experiment/create_model/source_type"] or "uploaded"
+            q.client["experiment/create_model/source_type"] = source_type
+            q.client["experiment/create_model/hf_dataset"] = (
+                q.args["experiment/create_model/hf_dataset"] or ""
+            ).strip()
+            q.client["experiment/create_model/hf_dataset_name"] = (
+                q.args["experiment/create_model/hf_dataset_name"] or ""
+            ).strip()
+            q.client["experiment/create_model/hf_split"] = (
+                q.args["experiment/create_model/hf_split"] or "train"
+            ).strip()
+            q.client["experiment/create_model/text_column"] = (
+                q.args["experiment/create_model/text_column"] or ""
+            ).strip()
             model_name = (
                 q.args["experiment/create_model/model_name"]
                 or "eva-mini131k-eva_gpt-dense-fp32"
@@ -323,8 +342,21 @@ async def handle(q: Q) -> None:
             )
             datasets_df = q.client.app_db.get_datasets_df()
             selected_rows = datasets_df.loc[datasets_df.id.astype(str) == str(dataset_id)]
-            if not use_pretrained_tokenizer and selected_rows.empty:
+            hf_dataset = (q.args["experiment/create_model/hf_dataset"] or "").strip()
+            if not use_pretrained_tokenizer and source_type == "uploaded" and selected_rows.empty:
                 q.client["notification_bar"] = "Please select a dataset first."
+                await create_model(q)
+            elif not use_pretrained_tokenizer and source_type == "huggingface" and not hf_dataset:
+                q.client["notification_bar"] = "Please provide a Hugging Face dataset id."
+                await create_model(q)
+            elif (
+                not use_pretrained_tokenizer
+                and source_type == "huggingface"
+                and not q.client["experiment/create_model/text_column"]
+            ):
+                q.client["notification_bar"] = (
+                    "Please provide the Hugging Face text column to train from."
+                )
                 await create_model(q)
             else:
                 csv_path = selected_rows.iloc[0].path if not selected_rows.empty else ""
@@ -347,8 +379,24 @@ async def handle(q: Q) -> None:
                 tokenizer_cmd = [
                     "python",
                     "scripts/create_model/train_tokenizer.py",
-                    "--csv",
-                    csv_path,
+                ]
+                if source_type == "huggingface":
+                    tokenizer_cmd.extend(["--hf-dataset", hf_dataset])
+                    hf_dataset_name = (
+                        q.args["experiment/create_model/hf_dataset_name"] or ""
+                    ).strip()
+                    if hf_dataset_name:
+                        tokenizer_cmd.extend(["--dataset-name", hf_dataset_name])
+                    tokenizer_cmd.extend([
+                        "--hf-split",
+                        str(q.args["experiment/create_model/hf_split"] or "train"),
+                    ])
+                else:
+                    tokenizer_cmd.extend(["--csv", csv_path])
+                text_column = q.client["experiment/create_model/text_column"]
+                if text_column:
+                    tokenizer_cmd.extend(["--text-column", text_column])
+                tokenizer_cmd.extend([
                     "--tokenizer-dir",
                     tokenizer_dir,
                     "--tokenizer-fast-dir",
@@ -372,7 +420,7 @@ async def handle(q: Q) -> None:
                         q.args["experiment/create_model/tokenizer_num_threads"]
                         or max(1, os.cpu_count() or 1)
                     ),
-                ]
+                ])
                 if not bool(q.args["experiment/create_model/shuffle_input_sentence"]):
                     tokenizer_cmd.append("--no-shuffle-input-sentence")
 

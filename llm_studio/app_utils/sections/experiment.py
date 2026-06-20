@@ -490,8 +490,27 @@ async def experiment_start(q: Q) -> None:
 
     preselected_model_path = q.client["experiment/start/preselected_model_path"]
     if preselected_model_path:
-        q.client["experiment/start/cfg"].llm_backbone = preselected_model_path
+        cfg = q.client["experiment/start/cfg"]
+        cfg.llm_backbone = preselected_model_path
+        cfg.architecture.pretrained = False
+        cfg.architecture.pretrained_weights = ""
+        cfg.architecture.backbone_dtype = "bfloat16"
+        cfg.training.lora = False
+        q.client["experiment/start/cfg/llm_backbone"] = cfg.llm_backbone
+        q.client["experiment/start/cfg/pretrained"] = cfg.architecture.pretrained
+        q.client["experiment/start/cfg/pretrained_weights"] = (
+            cfg.architecture.pretrained_weights
+        )
+        q.client["experiment/start/cfg/backbone_dtype"] = (
+            cfg.architecture.backbone_dtype
+        )
+        q.client["experiment/start/cfg/lora"] = cfg.training.lora
         q.client["experiment/start/preselected_model_path"] = None
+        q.client["notification_bar"] = (
+            "Create experiment is configured for full training from scratch: "
+            "pretrained weights are disabled, LoRA is disabled, and backbone dtype "
+            "is set to bfloat16. The experiment template values were updated as well."
+        )
 
     option_items = get_ui_elements_for_cfg(cfg=q.client["experiment/start/cfg"], q=q)
     items.extend(option_items)

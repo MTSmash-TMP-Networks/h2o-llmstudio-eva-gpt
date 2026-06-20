@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 import sentencepiece as spm
+from datasets import load_dataset
 from transformers import LlamaTokenizer, LlamaTokenizerFast
 
 # (trimmed constants)
@@ -90,7 +91,36 @@ def _resolve_table_path(data_path: str, dataset_name: str | None = None) -> str:
     raise FileNotFoundError(f"Input path does not exist: {path}")
 
 
-def build_training_file(table_path: str, out_txt: str, max_line_chars: int) -> None:
+def _select_text_columns(columns: list[str], text_column: str | None) -> list[str]:
+    cols = [c for c in columns if str(c).strip() and not str(c).startswith("Unnamed:")]
+    if text_column:
+        if text_column not in cols:
+            raise ValueError(f"Text column {text_column!r} not found. Available columns: {cols}")
+        return [text_column]
+    if len(cols) == 1:
+        return cols
+    raise ValueError(
+        "Tokenizer training expects exactly one text column. "
+        "Pass --text-column for CSV/Parquet files with multiple columns."
+    )
+
+
+def _write_text_rows(row_iter, columns: list[str], out_txt: str, max_line_chars: int) -> None:
+    Path(out_txt).parent.mkdir(parents=True, exist_ok=True)
+    with open(out_txt, "w", encoding="utf-8") as out:
+        for chunk in row_iter:
+            lines = []
+            for _, row in chunk.iterrows():
+                text = "\n".join(_clean_text(row.get(c, "")) for c in columns if _clean_text(row.get(c, "")))
+                if text:
+                    lines.append(_normalize_line(text, max_line_chars))
+                lines.extend(_normalize_line(x, max_line_chars) for x in _extract_codeblocks(text))
+                lines.extend(_normalize_line(x, max_line_chars) for x in _extract_inline_code(text))
+            if lines:
+                out.write("\n".join(x for x in lines if x) + "\n")
+
+
+def build_training_file(table_path: str, out_txt: str, max_line_chars: int, text_column: str | None = None) -> None:
     ext = Path(table_path).suffix.lower()
     if ext == ".csv":
         header = pd.read_csv(table_path, nrows=0)
@@ -102,22 +132,31 @@ def build_training_file(table_path: str, out_txt: str, max_line_chars: int) -> N
     else:
         raise ValueError(f"Unsupported dataset extension '{ext}' for file: {table_path}")
 
-    cols = [c for c in header.columns if str(c).strip() and not str(c).startswith("Unnamed:")]
-    if not cols:
-        raise ValueError("Dataset has no usable columns")
+    cols = _select_text_columns(list(header.columns), text_column)
+    _write_text_rows(row_iter, cols, out_txt, max_line_chars)
 
-    Path(out_txt).parent.mkdir(parents=True, exist_ok=True)
-    with open(out_txt, "w", encoding="utf-8") as out:
-        for chunk in row_iter:
-            lines = []
-            for _, row in chunk.iterrows():
-                text = "\n".join(_clean_text(row.get(c, "")) for c in cols if _clean_text(row.get(c, "")))
-                if text:
-                    lines.append(_normalize_line(text, max_line_chars))
-                lines.extend(_normalize_line(x, max_line_chars) for x in _extract_codeblocks(text))
-                lines.extend(_normalize_line(x, max_line_chars) for x in _extract_inline_code(text))
-            if lines:
-                out.write("\n".join(x for x in lines if x) + "\n")
+
+def build_training_file_from_hf(
+    dataset_path: str,
+    out_txt: str,
+    max_line_chars: int,
+    text_column: str,
+    dataset_name: str | None = None,
+    split: str = "train",
+) -> None:
+    dataset = load_dataset(dataset_path, dataset_name, split=split)
+    if text_column not in dataset.column_names:
+        raise ValueError(
+            f"Text column {text_column!r} not found in Hugging Face dataset. "
+            f"Available columns: {dataset.column_names}"
+        )
+
+    def _chunks():
+        batch_size = 20_000
+        for start in range(0, len(dataset), batch_size):
+            yield pd.DataFrame(dataset[start : start + batch_size])
+
+    _write_text_rows(_chunks(), [text_column], out_txt, max_line_chars)
 
 
 def reservoir_sample(input_path: str, output_path: str, max_lines: int, seed: int) -> None:
@@ -147,8 +186,12 @@ def reservoir_sample(input_path: str, output_path: str, max_lines: int, seed: in
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--csv", required=True, help="Path to CSV/Parquet file or directory containing dataset file(s)")
-    p.add_argument("--dataset-name", default=None, help="Optional dataset filename/stem when --csv points to a directory")
+    source = p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--csv", help="Path to CSV/Parquet file or directory containing dataset file(s)")
+    source.add_argument("--hf-dataset", help="Hugging Face dataset path, for example wikitext")
+    p.add_argument("--dataset-name", default=None, help="Optional CSV filename/stem, or Hugging Face dataset config name")
+    p.add_argument("--hf-split", default="train", help="Hugging Face dataset split to read")
+    p.add_argument("--text-column", default=None, help="Text column to train from. Required for Hugging Face datasets and multi-column tables")
     p.add_argument("--tokenizer-dir", default="./tokenizer")
     p.add_argument("--tokenizer-fast-dir", default="./tokenizer_fast")
     p.add_argument("--model-prefix", default="tokenizer")
@@ -169,11 +212,20 @@ def main() -> None:
     p.add_argument("--no-shuffle-input-sentence", dest="shuffle_input_sentence", action="store_false")
     args = p.parse_args()
 
-    args.csv = _resolve_table_path(args.csv, args.dataset_name)
+    if args.hf_dataset and not args.text_column:
+        raise ValueError("--text-column is required when using --hf-dataset")
 
-    train_txt = os.path.join(os.path.dirname(args.csv), "train_data_from_csv.txt")
-    sampled_txt = os.path.join(os.path.dirname(args.csv), "train_data_sampled.txt")
-    build_training_file(args.csv, train_txt, args.max_line_chars)
+    data_dir = os.getcwd()
+    if args.csv:
+        args.csv = _resolve_table_path(args.csv, args.dataset_name)
+        data_dir = os.path.dirname(args.csv)
+
+    train_txt = os.path.join(data_dir, "train_data_from_text_source.txt")
+    sampled_txt = os.path.join(data_dir, "train_data_sampled.txt")
+    if args.hf_dataset:
+        build_training_file_from_hf(args.hf_dataset, train_txt, args.max_line_chars, args.text_column, args.dataset_name, args.hf_split)
+    else:
+        build_training_file(args.csv, train_txt, args.max_line_chars, args.text_column)
     reservoir_sample(train_txt, sampled_txt, args.max_lines, seed=args.seed)
 
     trainer_kwargs = {

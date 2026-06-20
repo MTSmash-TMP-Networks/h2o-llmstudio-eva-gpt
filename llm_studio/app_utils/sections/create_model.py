@@ -40,6 +40,13 @@ async def create_model(q: Q) -> None:
     pretrained_tokenizer_model = (
         q.client["experiment/create_model/pretrained_tokenizer_model"] or ""
     )
+    source_type = q.client["experiment/create_model/source_type"] or "uploaded"
+    hf_dataset = q.client["experiment/create_model/hf_dataset"] or ""
+    hf_split = q.client["experiment/create_model/hf_split"] or "train"
+    hf_dataset_name = q.client["experiment/create_model/hf_dataset_name"] or ""
+    text_column = q.client["experiment/create_model/text_column"] or (
+        "text" if source_type == "huggingface" else ""
+    )
     max_lines = _client_value("experiment/create_model/max_lines", 0)
     character_coverage = _client_value(
         "experiment/create_model/character_coverage", 0.99995
@@ -132,11 +139,61 @@ async def create_model(q: Q) -> None:
             ui.separator(),
             ui.text_l("Create new model"),
             ui.dropdown(
+                name="experiment/create_model/source_type",
+                label="Text source",
+                choices=[
+                    ui.choice(name="uploaded", label="Uploaded CSV/Parquet dataset"),
+                    ui.choice(name="huggingface", label="Hugging Face dataset"),
+                ],
+                value=source_type,
+                required=True,
+                trigger=True,
+            )
+            if not use_pretrained_tokenizer
+            else ui.text(""),
+            ui.dropdown(
                 name="experiment/create_model/dataset_id",
                 label="Dataset",
                 choices=dataset_choices,
                 value=dataset_value,
-                required=False,
+                required=source_type == "uploaded",
+            )
+            if not use_pretrained_tokenizer and source_type == "uploaded"
+            else ui.text(""),
+            ui.textbox(
+                name="experiment/create_model/hf_dataset",
+                label="Hugging Face dataset",
+                value=hf_dataset,
+                placeholder="z.B. wikitext",
+                required=source_type == "huggingface",
+            )
+            if not use_pretrained_tokenizer and source_type == "huggingface"
+            else ui.text(""),
+            ui.textbox(
+                name="experiment/create_model/hf_dataset_name",
+                label="Hugging Face dataset config (optional)",
+                value=hf_dataset_name,
+                placeholder="z.B. wikitext-103-raw-v1",
+            )
+            if not use_pretrained_tokenizer and source_type == "huggingface"
+            else ui.text(""),
+            ui.textbox(
+                name="experiment/create_model/hf_split",
+                label="Hugging Face split",
+                value=hf_split,
+            )
+            if not use_pretrained_tokenizer and source_type == "huggingface"
+            else ui.text(""),
+            ui.textbox(
+                name="experiment/create_model/text_column",
+                label="Text column",
+                value=text_column,
+                placeholder=(
+                    "Required for Hugging Face or multi-column tables; "
+                    "leave empty for single-column CSV/Parquet"
+                ),
+                disabled=use_pretrained_tokenizer,
+                required=source_type == "huggingface",
             )
             if not use_pretrained_tokenizer
             else ui.text(""),
@@ -274,13 +331,14 @@ async def create_model(q: Q) -> None:
             ui.separator(),
             ui.text_l("Run pipeline"),
             ui.text("1) Train tokenizer (or use pretrained Hugging Face tokenizer):"),
-            ui.text("python scripts/create_model/train_tokenizer.py --csv <path-to-dataset.csv> --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
+            ui.text("python scripts/create_model/train_tokenizer.py --csv <path-to-dataset.csv> --text-column text --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
+            ui.text("python scripts/create_model/train_tokenizer.py --hf-dataset <dataset-id> --dataset-name <config optional> --hf-split train --text-column text --tokenizer-dir ./tokenizer --tokenizer-fast-dir ./tokenizer_fast"),
             ui.text("2) Initialize dense EvaGPT model:"),
             ui.text("python scripts/create_model/initialize_eva_model.py --tokenizer-src ./tokenizer_fast|<hf-model-id> --base-model <hf-model-id optional> --out-dir ./eva-mini131k-eva_gpt-dense-fp32"),
             ui.separator(),
             ui.text_l("Next steps"),
             ui.text(
-                "1) Use your selected dataset as CSV input for tokenizer training.\n"
+                "1) Use one text column from an uploaded CSV/Parquet dataset or a Hugging Face dataset for tokenizer training.\n"
                 "2) Train SentencePiece and export slow/fast tokenizers.\n"
                 "3) Initialize EvaGPT config with long context and save model + tokenizer."
             ),
