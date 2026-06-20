@@ -100,16 +100,17 @@ class ConversationChainHandler:
         parent_ids = df[cfg.dataset.parent_id_column].tolist()
         # Some datasets may include parent ids that are not in the dataset.
         sample_ids_set = set(sample_ids)
-        parent_ids = [idx if idx in sample_ids_set else "None" for idx in parent_ids]
+        parent_ids = [
+            idx
+            if idx in sample_ids_set and not self._is_missing_parent_id(idx)
+            else "None"
+            for idx in parent_ids
+        ]
 
         id2parent_id = {
             idx: parent_id
             for idx, parent_id in zip(sample_ids, parent_ids, strict=False)
-            if parent_id not in [None, "None"]
-            and (
-                not isinstance(parent_id, float)
-                or (not np.isnan(parent_id) and not np.isinf(parent_id))
-            )
+            if not self._is_missing_parent_id(parent_id)
         }
         if cfg.dataset.limit_chained_samples:
             # end id == id is not a parent id of another conversation id
@@ -163,6 +164,16 @@ class ConversationChainHandler:
         return systems
 
     @staticmethod
+    def _is_missing_parent_id(parent_id):
+        if parent_id is None:
+            return True
+        if isinstance(parent_id, str) and parent_id.strip() in ["", "None"]:
+            return True
+        return isinstance(parent_id, float) and (
+            np.isnan(parent_id) or np.isinf(parent_id)
+        )
+
+    @staticmethod
     def get_conversation_ids(id2parent_id, end_id):
         """
         Gets the conversation chain for a given starting conversation ID.
@@ -176,21 +187,21 @@ class ConversationChainHandler:
         """
         # prevent infinite loops in case
         # of circular parent chains (dataframe issue)
-        loop_counter = 0
+        visited_ids = {end_id}
 
         conversation_chain_ids = [end_id]
         parent_id = end_id
         while parent_id in id2parent_id:
-            loop_counter += 1
-
             parent_id = id2parent_id[parent_id]
-            conversation_chain_ids = [parent_id] + conversation_chain_ids
-            if loop_counter > 1000:
+            if ConversationChainHandler._is_missing_parent_id(parent_id):
+                break
+            if parent_id in visited_ids:
                 raise ValueError(
-                    f"Parent chain of sample with idx {end_id} "
-                    f"exceeds max loop count of 1000. "
+                    f"Parent chain of sample with idx {end_id} is circular. "
                     f"Please ensure that parent chain is not circular."
                 )
+            visited_ids.add(parent_id)
+            conversation_chain_ids = [parent_id] + conversation_chain_ids
         return conversation_chain_ids
 
     def __len__(self):
