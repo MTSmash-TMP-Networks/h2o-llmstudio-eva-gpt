@@ -94,7 +94,8 @@ class CustomDataset(Dataset):
             self.parse_system(self.cfg, system) for system in input_text_dict["systems"]
         ]
         input_text_dict["prompts"] = [
-            self.parse_prompt(self.cfg, prompt) for prompt in input_text_dict["prompts"]
+            self.parse_prompt_body(self.cfg, prompt)
+            for prompt in input_text_dict["prompts"]
         ]
         input_text_dict["answers"] = [
             self.parse_answer(self.cfg, answer) for answer in input_text_dict["answers"]
@@ -105,7 +106,7 @@ class CustomDataset(Dataset):
         self, idx: int, augment: bool = True, trim_to_max_length: bool = True
     ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
         input_text_dict = self._prepare_input_text_dict(idx)
-        _, prompt_encodings, answer_encodings = self.get_encodings(
+        _, prompt_encodings, answer_encodings, prompt_label_masks = self.get_encodings(
             input_text_dict=input_text_dict,
             augment=augment,
             trim_to_max_length=trim_to_max_length,
@@ -118,7 +119,9 @@ class CustomDataset(Dataset):
                 )
             ]
         )
-        labels = self._get_raw_labels(prompt_encodings, answer_encodings)
+        labels = self._get_raw_labels(
+            prompt_encodings, answer_encodings, prompt_label_masks
+        )
         return input_ids, labels, prompt_encodings, answer_encodings
 
     def __getitem__(self, idx: int) -> dict:
@@ -193,6 +196,10 @@ class CustomDataset(Dataset):
         )
 
         return sample
+
+    @staticmethod
+    def parse_prompt_body(cfg: Any, prompt: str):
+        return f"{prompt}"
 
     @staticmethod
     def parse_prompt(cfg: Any, prompt: str):
@@ -521,7 +528,9 @@ class CustomDataset(Dataset):
             for id_ in id_list:
                 find_ancestor(id_, parent_map)
 
-    def _get_raw_labels(self, prompt_encodings, answer_encodings):
+    def _get_raw_labels(
+        self, prompt_encodings, answer_encodings, prompt_label_masks=None
+    ):
         labels = torch.cat(
             [
                 torch.cat([prompt_encoding, answer_encoding])
@@ -540,8 +549,17 @@ class CustomDataset(Dataset):
                     not self.cfg.dataset.only_last_answer
                     or idx == len(answer_encodings) - 1
                 ):
+                    if (
+                        getattr(
+                            self.cfg.dataset, "mask_prompt_user_text_only", False
+                        )
+                        and prompt_label_masks is not None
+                    ):
+                        prompt_mask = prompt_label_masks[idx]
+                    else:
+                        prompt_mask = torch.ones_like(prompt_encoding)
                     mask = [
-                        torch.ones_like(prompt_encoding),
+                        prompt_mask,
                         torch.zeros_like(answer_encoding),
                     ]
                 else:
@@ -601,12 +619,20 @@ class CustomDataset(Dataset):
         system_encoding = encodings[0][0]
         prompt_encodings = [encoding[1] for encoding in encodings]
         answer_encodings = [encoding[2] for encoding in encodings]
+        prompt_label_masks = [encoding[3] for encoding in encodings]
         # concatenate system encoding with root prompt encoding
         prompt_encodings[0] = torch.cat([system_encoding, prompt_encodings[0]])
+        prompt_label_masks[0] = torch.cat(
+            [
+                torch.zeros_like(system_encoding, dtype=torch.bool),
+                prompt_label_masks[0],
+            ]
+        )
         return (
             system_encoding,
             prompt_encodings,
             answer_encodings,
+            prompt_label_masks,
         )
 
     def _trim_encodings_to_max_length(self, encodings: list[list[torch.Tensor]]):
@@ -616,9 +642,9 @@ class CustomDataset(Dataset):
         """
         max_length = self.cfg.tokenizer.max_length
         start_idx = 0
-        total_len = sum(len(prompt) + len(answer) for _, prompt, answer in encodings)
+        total_len = sum(len(prompt) + len(answer) for _, prompt, answer, _ in encodings)
         while start_idx < len(encodings) - 1 and total_len > max_length:
-            _, prompt, answer = encodings[start_idx]
+            _, prompt, answer, _ = encodings[start_idx]
             total_len -= len(prompt) + len(answer)
             start_idx += 1
 
@@ -640,10 +666,12 @@ class CustomDataset(Dataset):
                     self.parse_system(
                         self.cfg, self.conversation_chain_handler.systems[idx]
                     ),
-                    self.parse_prompt(
+                    self.parse_prompt_body(
                         self.cfg, self.conversation_chain_handler.prompts[idx]
                     ),
-                    self.conversation_chain_handler.answers[idx],
+                    self.parse_answer(
+                        self.cfg, self.conversation_chain_handler.answers[idx]
+                    ),
                 )
             ] + parent_encodings[1:]
         encodings = parent_encodings + [encodings[-1]]
@@ -655,15 +683,51 @@ class CustomDataset(Dataset):
                 self.tokenizer, system, self.cfg.tokenizer.max_length, "right"
             )["input_ids"]
         else:
-            system_encoding = torch.empty(0)
-        prompt_encoding = self.encode(
-            self.tokenizer, prompt, self.cfg.tokenizer.max_length, "left"
-        )["input_ids"]
+            system_encoding = torch.empty(0, dtype=torch.long)
+        prompt_encoding, prompt_label_mask = self._get_prompt_encoding_and_mask(prompt)
         answer_encoding = self.encode(
             self.tokenizer, answer, self.cfg.tokenizer.max_length, "right"
         )["input_ids"]
 
-        return [system_encoding, prompt_encoding, answer_encoding]
+        return [system_encoding, prompt_encoding, answer_encoding, prompt_label_mask]
+
+    def _get_prompt_encoding_and_mask(
+        self, prompt: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        prompt_parts = [
+            (
+                codecs.decode(self.cfg.dataset.text_prompt_start, "unicode_escape"),
+                False,
+            ),
+            (prompt, True),
+        ]
+        if self.cfg.dataset.add_eos_token_to_prompt:
+            prompt_parts.append((self.cfg.tokenizer._tokenizer_eos_token, False))
+        prompt_parts.append(
+            (
+                codecs.decode(self.cfg.dataset.text_answer_separator, "unicode_escape"),
+                False,
+            )
+        )
+
+        encodings = []
+        masks = []
+        for text, mask_user_text in prompt_parts:
+            if text == "":
+                continue
+            input_ids = self.encode(
+                self.tokenizer, text, self.cfg.tokenizer.max_length, "left"
+            )["input_ids"]
+            encodings.append(input_ids)
+            # Keep chat-format tokens trainable; mask only the natural user text.
+            masks.append(torch.full_like(input_ids, mask_user_text, dtype=torch.bool))
+
+        if not encodings:
+            return torch.empty(0), torch.empty(0, dtype=torch.bool)
+
+        prompt_encoding = torch.cat(encodings)[-self.cfg.tokenizer.max_length :]
+        prompt_label_mask = torch.cat(masks)[-self.cfg.tokenizer.max_length :]
+        return prompt_encoding, prompt_label_mask
 
     @staticmethod
     def pad_tokens(
