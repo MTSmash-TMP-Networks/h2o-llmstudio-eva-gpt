@@ -211,7 +211,10 @@ def sample_data(cfg: DefaultConfigProblemBase, df: pd.DataFrame) -> pd.DataFrame
             if (
                 parent is None
                 or pd.isna(parent)
-                or (isinstance(parent, str) and parent.strip() in ["", "None"])
+                or (
+                    isinstance(parent, str)
+                    and parent.strip().lower() in ["", "none", "nan", "null", "na"]
+                )
             ):
                 return node
             return get_root(parent, visited_nodes)
