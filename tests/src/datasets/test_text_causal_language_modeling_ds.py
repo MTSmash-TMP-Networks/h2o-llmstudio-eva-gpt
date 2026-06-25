@@ -492,7 +492,7 @@ def test_skip_long_samples_in_training(mock_get_tokenizer):
     )
 
     assert len(dataset) == 1
-    assert dataset.sample_index == [(0, None)]
+    assert dataset.sample_index == [(0, None, 0)]
 
 
 @patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
@@ -507,7 +507,7 @@ def test_sliding_window_expands_long_training_samples(mock_get_tokenizer):
         mode="train",
     )
 
-    assert dataset.sample_index == [(0, 0), (0, 4)]
+    assert dataset.sample_index == [(0, 0, 0), (0, 4, 6)]
     assert len(dataset) == 2
     first_sample = dataset[0]
     second_sample = dataset[1]
