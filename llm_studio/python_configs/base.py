@@ -41,7 +41,7 @@ class DefaultConfig:
             and self.__class__.__module__.endswith("text_causal_language_modeling_config")
             and "train_text_column" not in self.__dict__
         ):
-            # UI toggle for mixed chat/instruction/raw-text datasets.  This is added
+            # UI toggle for mixed chat/instruction/raw-text datasets. This is added
             # here so existing serialized configs keep working without requiring a
             # migration of the dataclass constructor signature.
             self.__class__.__annotations__.setdefault("train_text_column", bool)
@@ -162,6 +162,7 @@ class DefaultConfig:
         Returns:
             A list of the same length and with same elements as `self.__dict__.keys()`.
         """
+
         keys = self.__dict__.keys()
 
         ordered_keys = [key for key in self._order if key in keys]
@@ -189,14 +190,74 @@ class DefaultConfig:
             try:
                 d.update(**c.__annotations__)
             except AttributeError:
+                # object, at least, has no __annotations__ attribute.
                 pass
         return d
+
+    @classmethod
+    def from_dict(cls, d: dict):
+        """Creates a config object from a dictionary"""
+        d_filtered = {k: v for k, v in d.items() if k in cls.get_annotations()}
+        if len(d) != len(d_filtered):
+            logger.warning(
+                f"Keys {set(d.keys()) - set(d_filtered.keys())} are not in the config."
+            )
+        return cls(**d_filtered)  # mypy: ignore
 
 
 @dataclass
 class DefaultConfigProblemBase(DefaultConfig):
     """
-    Template for problem specific configuration
+    Base class for all problem configs.
+    Defines the interface for all problem configs.
     """
 
-    pass
+    experiment_name: str
+    output_directory: str
+    llm_backbone: str
+
+    dataset: Any
+    tokenizer: Any
+    architecture: Any
+    training: Any
+    augmentation: Any
+    prediction: Any
+    environment: Any
+    logging: Any
+
+    @property
+    def problem_type(self) -> str:
+        """
+        Parse problem_type from config filename,
+        for example: text_causal_language_modeling_config.py -> causal_language_modeling
+        """
+        return type(self).__dict__["__module__"].split(".")[-1].replace("_config", "")
+
+    @classmethod
+    def from_dict(cls, cfg_dict: dict):
+        class_fields = {f.name: f for f in dataclasses.fields(cls)}
+
+        # Prepare arguments for creating a new dataclass instance
+        init_args = {}
+        for field_name, field_obj in class_fields.items():
+            if hasattr(field_obj.type, "from_dict"):
+                attr_value = cfg_dict.get(field_name, {})
+                init_args[field_name] = field_obj.type.from_dict(attr_value)
+            else:
+                # Use the value from cfg_dict,
+                # or the field's default value if not available in cfg_dict
+                init_args[field_name] = cfg_dict.get(field_name, field_obj.default)
+
+        return cls(**init_args)
+
+    def check(self) -> dict[str, list]:
+        """
+        Checks for errors (incompatible settings) for the specific problem type.
+        Returns:
+        A dictionary with three keys:
+        - "title": A list of error titles.
+        - "message": A list of error messages.
+        - "type": A list of error types, can be "error", "warning", "deprecated"
+        """
+        errors: dict[str, list] = {"title": [], "message": [], "type": []}
+        return errors
