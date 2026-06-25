@@ -44,8 +44,7 @@ class DefaultConfig:
             and "train_text_column" not in self.__dict__
         ):
             # UI toggle for mixed chat/instruction/raw-text datasets. This is added
-            # here so existing serialized configs keep working without requiring a
-            # migration of the dataclass constructor signature.
+            # dynamically for compatibility with existing config constructors.
             self.__class__.__annotations__.setdefault("train_text_column", bool)
             self.train_text_column = True
 
@@ -199,12 +198,29 @@ class DefaultConfig:
     @classmethod
     def from_dict(cls, d: dict):
         """Creates a config object from a dictionary"""
-        d_filtered = {k: v for k, v in d.items() if k in cls.get_annotations()}
-        if len(d) != len(d_filtered):
-            logger.warning(
-                f"Keys {set(d.keys()) - set(d_filtered.keys())} are not in the config."
-            )
-        return cls(**d_filtered)  # mypy: ignore
+        extra_values = {}
+        dataclass_field_names = {field.name for field in dataclasses.fields(cls)}
+        for key in set(d) - dataclass_field_names:
+            if key in cls.get_annotations():
+                extra_values[key] = d[key]
+
+        d_filtered = {k: v for k, v in d.items() if k in dataclass_field_names}
+        unknown_keys = set(d.keys()) - dataclass_field_names - set(extra_values)
+        if unknown_keys:
+            logger.warning(f"Keys {unknown_keys} are not in the config.")
+
+        cfg = cls(**d_filtered)  # mypy: ignore
+        for key, value in extra_values.items():
+            setattr(cfg, key, value)
+            if hasattr(cfg, "_possible_values") and key not in cfg._possible_values:
+                cfg._possible_values[key] = None
+            if hasattr(cfg, "_visibility") and key not in cfg._visibility:
+                cfg._visibility[key] = 0
+            if hasattr(cfg, "_grid_search_values") and key not in cfg._grid_search_values:
+                cfg._grid_search_values[key] = None
+            if hasattr(cfg, "_grid_search_iscustom") and key not in cfg._grid_search_iscustom:
+                cfg._grid_search_iscustom[key] = None
+        return cfg
 
 
 @dataclass
