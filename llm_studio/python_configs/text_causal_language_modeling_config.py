@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-import llm_studio.src.datasets.mixed_text_causal_language_modeling_ds
+import llm_studio.src.datasets.text_causal_language_modeling_ds
 from llm_studio.app_utils.config import default_cfg
 from llm_studio.python_configs.base import DefaultConfig, DefaultConfigProblemBase
 from llm_studio.src import possible_values
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConfigNLPCausalLMDataset(DefaultConfig):
     dataset_class: Any = (
-        llm_studio.src.datasets.mixed_text_causal_language_modeling_ds.CustomDataset
+        llm_studio.src.datasets.text_causal_language_modeling_ds.CustomDataset
     )
 
     personalize: bool = False
@@ -210,6 +210,7 @@ class ConfigNLPCausalLMTraining(DefaultConfig):
         super().__post_init__()
         self._possible_values["loss_function"] = self.loss_class.names()
         self._possible_values["optimizer"] = Optimizers.names()
+
         self._possible_values["learning_rate"] = possible_values.Number(
             step=1e-9, min=1e-9
         )
@@ -256,3 +257,471 @@ class ConfigNLPCausalLMTraining(DefaultConfig):
             allow_custom=True,
             placeholder="Select optional layers to unfreeze...",
         )
+
+        self._possible_values["save_checkpoint"] = possible_values.String(
+            values=(
+                ("last", "Last"),
+                ("best", "Best"),
+                ("each_evaluation_epoch", "Each evaluation epoch"),
+                ("disable", "Disable"),
+            ),
+            allow_custom=False,
+        )
+
+        self._possible_values["evaluation_epochs"] = (0.01, 1, 0.01)
+
+        self._grid_search_values["loss_function"] = self._possible_values[
+            "loss_function"
+        ]
+        self._grid_search_values["learning_rate"] = (
+            0.000001,
+            0.000005,
+            0.00001,
+            0.00005,
+            0.0001,
+            0.0003,
+            0.0005,
+        )
+        self._grid_search_values["differential_learning_rate"] = (
+            0.000001,
+            0.000005,
+            0.00001,
+            0.00005,
+            0.0001,
+            0.0003,
+            0.0005,
+        )
+        self._grid_search_values["weight_decay"] = (0.0, 0.01, 0.1, 0.2)
+        self._grid_search_values["warmup_epochs"] = (0.0, 0.25)
+        self._grid_search_values["gradient_clip"] = (0.0, 0.5, 1, 2, 4, 8)
+        self._grid_search_values["grad_accumulation"] = (1, 2, 4, 8, 16, 32)
+        self._grid_search_values["batch_size"] = (1, 2, 4, 8, 16, 32, 64)
+        self._grid_search_values["epochs"] = (1, 2, 4)
+        self._grid_search_values["lora_r"] = (2, 4, 8, 16, 32, 64, 128)
+        self._grid_search_values["lora_alpha"] = (4, 8, 16, 32, 64, 128, 256)
+
+        self._grid_search_iscustom["loss_function"] = False
+        self._grid_search_iscustom["learning_rate"] = True
+        self._grid_search_iscustom["differential_learning_rate"] = True
+        self._grid_search_iscustom["weight_decay"] = True
+        self._grid_search_iscustom["warmup_epochs"] = True
+        self._grid_search_iscustom["gradient_clip"] = True
+        self._grid_search_iscustom["grad_accumulation"] = True
+
+        self._visibility["loss_class"] = -1
+        self._visibility["drop_last_batch"] = -1
+        self._visibility["differential_learning_rate_layers"] = 1
+        self._visibility["differential_learning_rate"] = 1
+
+        self._nesting.add(
+            ["differential_learning_rate"],
+            [
+                Dependency(
+                    key="differential_learning_rate_layers", value=None, is_set=False
+                )
+            ],
+        )
+        self._nesting.add(
+            ["freeze_layers"],
+            [Dependency(key="lora", value=False, is_set=True)],
+        )
+        self._nesting.add(
+            [
+                "use_dora",
+                "lora_r",
+                "lora_alpha",
+                "lora_dropout",
+                "use_rslora",
+                "lora_target_modules",
+                "lora_unfreeze_layers",
+            ],
+            [Dependency(key="lora", value=False, is_set=False)],
+        )
+        self._nesting.add(
+            ["min_learning_rate_ratio"],
+            [Dependency(key="schedule", value="Constant", is_set=False)],
+        )
+
+
+@dataclass
+class ConfigNLPCausalLMTokenizer(DefaultConfig):
+    max_length: int = 512
+    long_sample_strategy: str = "Truncate"
+    sliding_window_overlap: int = 0
+    add_prompt_answer_tokens: bool = False
+    padding_quantile: float = 1.0
+    tokenizer_kwargs: str = '{"use_fast": true, "add_prefix_space": false}'
+    _tokenizer_mask_token_id: int = 0
+    _tokenizer_eos_token: str = "<EOS>"
+    _vocab_length: int = 0
+    _stop_words_ids: list[int] = field(default_factory=list)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._possible_values["max_length"] = (32, 1024 * 16, 32)
+        self._possible_values["long_sample_strategy"] = possible_values.String(
+            values=(
+                ("Truncate", "Truncate long samples"),
+                ("Sliding Window", "Use sliding window"),
+                ("Skip", "Skip long samples"),
+            ),
+            allow_custom=False,
+        )
+        self._possible_values["sliding_window_overlap"] = (0, 1024 * 16, 32)
+        self._possible_values["padding_quantile"] = (0, 1, 0.01)
+
+        self._grid_search_values["max_length"] = (256, 512, 1024)
+
+        self._grid_search_iscustom["max_length"] = True
+
+        self._nesting.add(
+            ["sliding_window_overlap"],
+            [
+                Dependency(
+                    key="long_sample_strategy", value="Sliding Window", is_set=True
+                )
+            ],
+        )
+
+        self._padding_side = "left"
+
+
+@dataclass
+class ConfigNLPCausalLMArchitecture(DefaultConfig):
+    model_class: Any = text_causal_language_modeling_model.Model
+    pretrained: bool = True
+
+    backbone_dtype: str = "int4"
+    gradient_checkpointing: bool = True
+    intermediate_dropout: float = 0
+    pretrained_weights: str = ""
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self._possible_values["backbone_dtype"] = possible_values.String(
+            values=("float32", "bfloat16", "float16", "int8", "int4"),
+            allow_custom=False,
+        )
+        self._possible_values["intermediate_dropout"] = (0, 0.5, 0.05)
+
+        self._grid_search_values["intermediate_dropout"] = (0.0, 0.05, 0.1, 0.15)
+
+        self._grid_search_iscustom["intermediate_dropout"] = True
+
+        self._visibility["model_class"] = -1
+
+
+@dataclass
+class ConfigNLPAugmentation(DefaultConfig):
+    nlp_augmentations_class: Any = BaseNLPAug
+    token_mask_probability: float = 0.0
+    skip_parent_probability: float = 0.0
+    random_parent_probability: float = 0.0
+    neftune_noise_alpha: float = 0.0
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._possible_values["token_mask_probability"] = (0.0, 0.9, 0.05)
+        self._possible_values["skip_parent_probability"] = (0.0, 1.0, 0.05)
+        self._possible_values["random_parent_probability"] = (0.0, 1.0, 0.05)
+        self._possible_values["neftune_noise_alpha"] = (0.0, 15, 0.05)
+
+        self._grid_search_values["token_mask_probability"] = (0.0, 0.1, 0.2, 0.3)
+        self._grid_search_values["skip_parent_probability"] = (0.0, 0.1, 0.2, 0.3)
+        self._grid_search_values["random_parent_probability"] = (0.0, 0.1, 0.2, 0.3)
+        self._grid_search_values["neftune_noise_alpha"] = (0.0, 5, 10, 15)
+
+        self._grid_search_iscustom["token_mask_probability"] = True
+        self._grid_search_iscustom["skip_parent_probability"] = True
+        self._grid_search_iscustom["random_parent_probability"] = True
+        self._grid_search_iscustom["neftune_noise_alpha"] = True
+
+        self._visibility["nlp_augmentations_class"] = -1
+
+
+@dataclass
+class ConfigNLPCausalLMPrediction(DefaultConfig):
+    metric_class: Any = text_causal_language_modeling_metrics.Metrics
+    metric: str = "BLEU"
+    metric_gpt_model: str = "gpt-3.5-turbo-0301"
+    metric_gpt_template: str = "general"
+
+    min_length_inference: int = 2
+    max_length_inference: int = 256
+    max_time: float = 0
+    batch_size_inference: int = 0
+
+    do_sample: bool = False
+    num_beams: int = 1
+    temperature: float = 0.0
+    repetition_penalty: float = 1.0
+    stop_tokens: str = ""
+    top_k: int = 0
+    top_p: float = 1.0
+
+    num_history: int = 4
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._possible_values["metric"] = self.metric_class.names()
+
+        self._possible_values["metric_gpt_model"] = possible_values.String(
+            values=(
+                "gpt-3.5-turbo-0301",
+                "gpt-3.5-turbo-0613",
+                "gpt-4-0314",
+                "gpt-4-0613",
+                "gpt-4-1106-preview",
+            ),
+            allow_custom=True,
+        )
+        self._possible_values["metric_gpt_template"] = possible_values.String(
+            values=tuple(f.split(".")[0] for f in os.listdir("prompts"))
+        )
+
+        self._possible_values["batch_size_inference"] = (0, 512, 1)
+        self._possible_values["min_length_inference"] = (0, 1024, 1)
+        self._possible_values["max_length_inference"] = (1, 4096, 1)
+        self._possible_values["max_time"] = (0.0, 600.0, 1.0)
+
+        self._possible_values["num_beams"] = (1, 4, 1)
+        self._possible_values["temperature"] = (0, 10, 0.05)
+        self._possible_values["repetition_penalty"] = (1, 10, 0.025)
+        self._possible_values["top_k"] = (0, 100, 1)
+        self._possible_values["top_p"] = (0.5, 1, 0.05)
+        self._possible_values["num_history"] = (1, 50, 1)
+
+        self._visibility["metric_class"] = -1
+        # possible values for num_history are only used in chatbot tab
+        self._visibility["num_history"] = -1
+
+        self._nesting.add(
+            ["metric_gpt_model", "metric_gpt_template"],
+            [Dependency(key="metric", value="GPT", is_set=True)],
+        )
+
+
+@dataclass
+class ConfigNLPCausalLMEnvironment(DefaultConfig):
+    gpus: tuple[str, ...] = tuple(str(x) for x in range(torch.cuda.device_count()))
+
+    mixed_precision: bool = True
+    mixed_precision_dtype: str = "bfloat16"
+
+    compile_model: bool = False
+    use_deepspeed: bool = False
+    deepspeed_method: str = "ZeRO2"
+    deepspeed_allgather_bucket_size: int = int(1e6)
+    deepspeed_reduce_bucket_size: int = int(1e6)
+    deepspeed_stage3_prefetch_bucket_size: int = int(1e6)
+    deepspeed_stage3_param_persistence_threshold: int = int(1e6)
+    #     deepspeed_offload_optimizer: bool = False
+    #     deepspeed_stage3_max_live_parameters: int = 1e9
+    #     deepspeed_stage3_max_reuse_distance: int = 1e9
+
+    find_unused_parameters: bool = False
+    trust_remote_code: bool = True
+    huggingface_branch: str = "main"
+    number_of_workers: int = 4
+    seed: int = -1
+
+    _seed: int = 0  # internal seed set in train.py (equals seed if seed is not -1)
+    _distributed: bool = False
+    _distributed_inference: bool = True
+    _local_rank: int = 0
+    _world_size: int = 1
+    _curr_step: int = 0
+    _step_log_denominator: int = 1
+    _curr_val_step: int = 0
+    _rank: int = 0  # global rank
+    _device: str = "cuda"
+    _cpu_comm: Any = None
+    _model_card_template: str = "text_causal_language_modeling_model_card_template.md"
+    _summary_card_template: str = (
+        "text_causal_language_modeling_experiment_summary_card_template.md"
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._possible_values["gpus"] = possible_values.String(
+            values=tuple(
+                [(str(x), f"GPU #{x + 1}") for x in range(torch.cuda.device_count())]
+            ),
+            allow_custom=False,
+        )
+
+        self._possible_values["mixed_precision_dtype"] = possible_values.String(
+            values=("bfloat16", "float16"),
+            allow_custom=False,
+        )
+
+        self._possible_values["number_of_workers"] = (1, multiprocessing.cpu_count(), 1)
+        self._possible_values["seed"] = possible_values.Number(step=1, min=-1)
+        self._possible_values["deepspeed_method"] = ["ZeRO2", "ZeRO3"]
+        self._possible_values["deepspeed_allgather_bucket_size"] = (
+            possible_values.Number(step=1, min=1e6)
+        )
+        self._possible_values["deepspeed_reduce_bucket_size"] = possible_values.Number(
+            step=1, min=1e6
+        )
+        self._possible_values["deepspeed_stage3_prefetch_bucket_size"] = (
+            possible_values.Number(step=1, min=1e6)
+        )
+        self._possible_values["deepspeed_stage3_param_persistence_threshold"] = (
+            possible_values.Number(step=1, min=1e6)
+        )
+        self._possible_values["deepspeed_stage3_max_live_parameters"] = (
+            possible_values.Number(step=1, min=1e6)
+        )
+        self._possible_values["deepspeed_stage3_max_reuse_distance"] = (
+            possible_values.Number(step=1, min=1e6)
+        )
+
+        self._nesting.add(
+            [
+                "mixed_precision_dtype",
+            ],
+            [Dependency(key="mixed_precision", value=True, is_set=True)],
+        )
+        self._nesting.add(
+            [
+                "deepspeed_method",
+                "deepspeed_reduce_bucket_size",
+            ],
+            [Dependency(key="use_deepspeed", value=True, is_set=True)],
+        )
+        self._nesting.add(
+            [
+                "deepspeed_allgather_bucket_size",
+            ],
+            [
+                Dependency(key="use_deepspeed", value=True, is_set=True),
+                Dependency(key="deepspeed_method", value="ZeRO2", is_set=True),
+            ],
+        )
+        self._nesting.add(
+            [
+                "deepspeed_stage3_prefetch_bucket_size",
+                "deepspeed_stage3_param_persistence_threshold",
+                # "deepspeed_offload_optimizer",
+            ],
+            [
+                Dependency(key="use_deepspeed", value=True, is_set=True),
+                Dependency(key="deepspeed_method", value="ZeRO3", is_set=True),
+            ],
+        )
+        # self._nesting.add(
+        #     [
+        #         "deepspeed_stage3_max_live_parameters",
+        #         "deepspeed_stage3_max_reuse_distance",
+        #     ],
+        #     [Dependency(key="deepspeed_offload_optimizer", value=False, is_set=False)],  # noqa: E501
+        # )
+
+
+@dataclass
+class ConfigNLPCausalLMLogging(DefaultConfig):
+    log_step_size: str = "absolute"
+    log_all_ranks: bool = False
+    logger: str = "None"
+    neptune_project: str = ""
+    wandb_project: str = ""
+    wandb_entity: str = ""
+    _neptune_debug: bool = False
+
+    plots_class: Any = text_causal_language_modeling_plots.Plots
+
+    # the actual logger, will be set dynamically at runtime
+    _logger: Any = None
+
+    def __post_init__(self):
+        super().__post_init__()
+        self._possible_values["log_step_size"] = possible_values.String(
+            values=(
+                ("absolute", "Absolute"),
+                ("relative", "Relative"),
+            ),
+            allow_custom=False,
+        )
+        self._possible_values["logger"] = ExternalLoggers.names()
+
+        self._nesting.add(
+            ["neptune_project"],
+            [Dependency(key="logger", value="Neptune", is_set=True)],
+        )
+        self._nesting.add(
+            ["wandb_project", "wandb_entity"],
+            [Dependency(key="logger", value="W&B", is_set=True)],
+        )
+
+        self._visibility["plots_class"] = -1
+
+
+@dataclass
+class ConfigProblemBase(DefaultConfigProblemBase):
+    output_directory: str = f"output/{os.path.basename(__file__).split('.')[0]}"
+    experiment_name: str = field(default_factory=generate_experiment_name)
+    llm_backbone: str = (
+        "h2oai/h2o-danube3-500m-base"
+        if "h2oai/h2o-danube3-500m-base" in default_cfg.default_causal_language_models
+        else default_cfg.default_causal_language_models[0]
+    )
+
+    dataset: ConfigNLPCausalLMDataset = field(default_factory=ConfigNLPCausalLMDataset)
+    tokenizer: ConfigNLPCausalLMTokenizer = field(
+        default_factory=ConfigNLPCausalLMTokenizer
+    )
+    architecture: ConfigNLPCausalLMArchitecture = field(
+        default_factory=ConfigNLPCausalLMArchitecture
+    )
+    training: ConfigNLPCausalLMTraining = field(
+        default_factory=ConfigNLPCausalLMTraining
+    )
+    augmentation: ConfigNLPAugmentation = field(default_factory=ConfigNLPAugmentation)
+    prediction: ConfigNLPCausalLMPrediction = field(
+        default_factory=ConfigNLPCausalLMPrediction
+    )
+    environment: ConfigNLPCausalLMEnvironment = field(
+        default_factory=ConfigNLPCausalLMEnvironment
+    )
+    logging: ConfigNLPCausalLMLogging = field(default_factory=ConfigNLPCausalLMLogging)
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        self._visibility["output_directory"] = -1
+
+        self._possible_values["llm_backbone"] = possible_values.String(
+            values=default_cfg.default_causal_language_models,
+            allow_custom=True,
+        )
+
+    def check(self) -> dict[str, list]:
+        # Define returned dictionary of errors/warnings
+        errors: dict[str, list] = {"title": [], "message": [], "type": []}
+        logger.debug("Checking for common errors in the configuration.")
+        try:
+            sanity_check(self)
+        except AssertionError as exception:
+            logger.error(f"Experiment start. Sanity check failed: {exception}")
+            logger.error(f"Error while validating data: {exception}", exc_info=True)
+            # Remove end-of-line from exception
+            exception_str = str(exception).replace("\n", " ")
+            errors["title"] += ["Dataset Validation Error"]
+            errors["message"] += [exception_str]
+            errors["type"].append("error")
+
+        if self.prediction.temperature > 0 and not self.prediction.do_sample:
+            errors["title"] += ["Do sample needs to be enabled for temperature > 0"]
+            errors["message"] += [
+                "Please enable do sample if you want to use temperature > 0."
+            ]
+            errors["type"].append("warning")
+        if self.prediction.temperature == 0 and self.prediction.do_sample:
+            errors["title"] += ["Temperature needs to be > 0 for do sample"]
+            errors["message"] += [
+                "Please increase temperature if you want to use do sample."
+            ]
+            errors["type"].append("warning")
+        return errors
