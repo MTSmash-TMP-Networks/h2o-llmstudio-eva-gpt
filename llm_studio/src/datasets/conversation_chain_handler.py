@@ -39,7 +39,9 @@ def _configured_text_columns(cfg) -> list[str]:
 
     columns.extend(AUXILIARY_TEXT_COLUMNS)
 
-    return list(dict.fromkeys([column for column in columns if column != PLAIN_TEXT_COLUMN]))
+    return list(
+        dict.fromkeys([column for column in columns if column != PLAIN_TEXT_COLUMN])
+    )
 
 
 def get_plain_text_mask(df: pd.DataFrame, cfg) -> pd.Series:
