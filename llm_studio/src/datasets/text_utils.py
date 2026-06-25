@@ -3,7 +3,7 @@ import json
 import logging
 import os
 
-from pandas import DataFrame
+from pandas import DataFrame, Series
 from transformers import AutoTokenizer
 
 from llm_studio.python_configs.base import DefaultConfigProblemBase
@@ -11,17 +11,23 @@ from llm_studio.python_configs.base import DefaultConfigProblemBase
 logger = logging.getLogger(__name__)
 
 
+def clean_missing_text_values(values: Series) -> Series:
+    values = values.fillna("").astype(str)
+    missing_strings = ["nan", "none", "null", "na"]
+    return values.mask(values.str.strip().str.lower().isin(missing_strings), "")
+
+
 def get_texts(df: DataFrame, cfg: DefaultConfigProblemBase):
     if isinstance(cfg.dataset.prompt_column, str):
         # single column dataset
-        texts = df[cfg.dataset.prompt_column].fillna("").astype(str)
+        texts = clean_missing_text_values(df[cfg.dataset.prompt_column])
         texts = texts.values
     else:
         # multi-column dataset - prepend (if necessary) and join
         columns = list(cfg.dataset.prompt_column)
 
         for column in columns:
-            df[column] = df[column].fillna("").astype(str)
+            df[column] = clean_missing_text_values(df[column])
 
         join_str = codecs.decode(cfg.dataset.prompt_column_separator, "unicode_escape")
 

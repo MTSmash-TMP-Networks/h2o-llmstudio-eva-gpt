@@ -195,6 +195,56 @@ def test_sample_data_treats_empty_parent_id_as_missing():
     assert "root_id" not in sampled_df.columns
 
 
+def test_conversation_handler_handles_german_csv_empty_parent_ids_cleanly():
+    cfg_mock = MagicMock()
+    cfg_mock.dataset.parent_id_column = "parent_id"
+    cfg_mock.dataset.id_column = "id"
+    cfg_mock.dataset.limit_chained_samples = False
+    cfg_mock.dataset.prompt_column = "Benutzer"
+    cfg_mock.dataset.answer_column = "Assistentin"
+    cfg_mock.dataset.system_column = "system"
+
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2", "3"],
+            "Benutzer": ["Hallo", "Wie geht es?", "Neues Thema"],
+            "Assistentin": ["Hi", "Gut", "Antwort"],
+            "parent_id": [float("nan"), "1", "nan"],
+            "system": [float("nan"), "Du bist hilfreich", "nan"],
+            "Kontext": [float("nan"), "", "Zusatz"],
+        }
+    )
+
+    handler = ConversationChainHandler(df=df, cfg=cfg_mock)
+
+    assert handler.conversation_chain_ids == [[0], [0, 1], [2]]
+    assert handler[0]["prompts"] == ["Hallo"]
+    assert handler[0]["answers"] == ["Hi"]
+    assert handler[0]["systems"] == [""]
+    assert handler[2]["systems"] == [""]
+
+
+def test_sample_data_treats_string_nan_parent_id_as_missing():
+    cfg_mock = MagicMock()
+    cfg_mock.dataset.parent_id_column = "parent_id"
+    cfg_mock.dataset.id_column = "id"
+    cfg_mock.dataset.data_sample = 1.0
+
+    df = pd.DataFrame(
+        {
+            "id": ["1", "2", "3"],
+            "parent_id": ["nan", "1", ""],
+            "prompt": ["Root", "Child", "Other root"],
+            "answer": ["Answer root", "Answer child", "Other answer"],
+        }
+    )
+
+    sampled_df = sample_data(cfg_mock, df)
+
+    assert len(sampled_df) == 3
+    assert "root_id" not in sampled_df.columns
+
+
 class TestReadDataframe:
     """Tests for read_dataframe function covering file ingestion."""
 

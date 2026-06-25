@@ -1,8 +1,9 @@
 import logging
 
 import numpy as np
+import pandas as pd
 
-from llm_studio.src.datasets.text_utils import get_texts
+from llm_studio.src.datasets.text_utils import clean_missing_text_values, get_texts
 from llm_studio.src.utils.utils import PatchedAttribute
 
 logger = logging.getLogger(__name__)
@@ -138,13 +139,13 @@ class ConversationChainHandler:
             answers = []
             for col in answer_column:
                 if col in df.columns:
-                    answers.append(df[col].fillna("").astype(str).tolist())
+                    answers.append(clean_missing_text_values(df[col]).tolist())
                 else:
                     answers.append(["" for _ in range(len(self.prompts))])
             answers = [",".join(ans) for ans in zip(*answers, strict=False)]
         else:
             if answer_column in df.columns:
-                answers = df[answer_column].fillna("").astype(str).tolist()
+                answers = clean_missing_text_values(df[answer_column]).tolist()
             else:
                 answers = ["" for _ in range(len(self.prompts))]
         return answers
@@ -158,7 +159,9 @@ class ConversationChainHandler:
                 )
                 systems = ["" for _ in range(len(self.prompts))]
             else:
-                systems = df[cfg.dataset.system_column].fillna("").astype(str).tolist()
+                systems = clean_missing_text_values(
+                    df[cfg.dataset.system_column]
+                ).tolist()
         else:
             systems = ["" for _ in range(len(self.prompts))]
         return systems
@@ -167,11 +170,12 @@ class ConversationChainHandler:
     def _is_missing_parent_id(parent_id):
         if parent_id is None:
             return True
-        if isinstance(parent_id, str) and parent_id.strip() in ["", "None"]:
-            return True
-        return isinstance(parent_id, float) and (
-            np.isnan(parent_id) or np.isinf(parent_id)
-        )
+        if isinstance(parent_id, str):
+            return parent_id.strip().lower() in ["", "none", "nan", "null", "na"]
+        try:
+            return bool(pd.isna(parent_id)) or bool(np.isinf(parent_id))
+        except TypeError:
+            return False
 
     @staticmethod
     def get_conversation_ids(id2parent_id, end_id):
