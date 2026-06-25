@@ -335,7 +335,7 @@ def test_encode():
     result = dataset[0]
 
     labels = result["labels"]
-    assert (labels != -100).sum() == 4
+    assert (labels != -100).sum() == 28
 
     out = dataset.tokenizer.decode(result["input_ids"]).replace("<unk>", "")
     assert out == "<|prompt|>a</s><|answer|>b</s><|prompt|>a</s><|answer|>b</s>"
@@ -513,3 +513,81 @@ def test_sliding_window_expands_long_training_samples(mock_get_tokenizer):
     second_sample = dataset[1]
     assert first_sample["attention_mask"].sum() == 10
     assert second_sample["attention_mask"].sum() == 10
+
+
+class OrdinalCharacterTokenizer:
+    pad_token_id = 0
+
+    def __call__(self, text, return_tensors=None, add_special_tokens=False):
+        input_ids = torch.tensor([ord(char) for char in text], dtype=torch.long)
+        return {
+            "input_ids": input_ids.unsqueeze(0),
+            "attention_mask": torch.ones(1, len(input_ids), dtype=torch.long),
+        }
+
+    def decode(self, ids, skip_special_tokens=False):
+        return "".join(chr(int(token_id)) for token_id in ids if int(token_id) != 0)
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_mask_prompt_labels_keeps_prompt_format_tokens_trainable(mock_get_tokenizer):
+    mock_get_tokenizer.return_value = OrdinalCharacterTokenizer()
+    df = pd.DataFrame({"prompt": ["hi"], "answer": ["ok"]})
+    cfg = ConfigProblemBase(
+        llm_backbone="unit-test",
+        dataset=ConfigNLPCausalLMDataset(
+            system_column="None",
+            prompt_column=("prompt",),
+            answer_column="answer",
+            text_prompt_start="<|prompt|>",
+            text_answer_separator="<|answer|>",
+            add_eos_token_to_prompt=True,
+            add_eos_token_to_answer=False,
+            mask_prompt_labels=True,
+            mask_prompt_user_text_only=True,
+        ),
+        tokenizer=ConfigNLPCausalLMTokenizer(max_length=128),
+    )
+    cfg.tokenizer._tokenizer_eos_token = "<EOS>"
+
+    dataset = CustomDataset(df, cfg)
+    input_ids, labels, _, _ = dataset._get_input_ids_labels_and_encodings(0)
+    text = dataset.tokenizer.decode(input_ids)
+
+    assert text == "<|prompt|>hi<EOS><|answer|>ok"
+    assert torch.equal(labels[: len("<|prompt|>")], input_ids[: len("<|prompt|>")])
+    assert labels[len("<|prompt|>") : len("<|prompt|>hi")].tolist() == [-100, -100]
+    assert torch.equal(labels[len("<|prompt|>hi") :], input_ids[len("<|prompt|>hi") :])
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_mask_prompt_user_text_only_restores_legacy_full_prompt_mask(
+    mock_get_tokenizer,
+):
+    mock_get_tokenizer.return_value = OrdinalCharacterTokenizer()
+    df = pd.DataFrame({"prompt": ["hi"], "answer": ["ok"]})
+    cfg = ConfigProblemBase(
+        llm_backbone="unit-test",
+        dataset=ConfigNLPCausalLMDataset(
+            system_column="None",
+            prompt_column=("prompt",),
+            answer_column="answer",
+            text_prompt_start="<|prompt|>",
+            text_answer_separator="<|answer|>",
+            add_eos_token_to_prompt=True,
+            add_eos_token_to_answer=False,
+            mask_prompt_labels=True,
+            mask_prompt_user_text_only=False,
+        ),
+        tokenizer=ConfigNLPCausalLMTokenizer(max_length=128),
+    )
+    cfg.tokenizer._tokenizer_eos_token = "<EOS>"
+
+    dataset = CustomDataset(df, cfg)
+    input_ids, labels, prompt_encodings, _ = (
+        dataset._get_input_ids_labels_and_encodings(0)
+    )
+    prompt_len = len(prompt_encodings[0])
+
+    assert labels[:prompt_len].tolist() == [-100] * prompt_len
+    assert torch.equal(labels[prompt_len:], input_ids[prompt_len:])

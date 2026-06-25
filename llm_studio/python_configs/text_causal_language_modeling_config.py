@@ -59,6 +59,7 @@ class ConfigNLPCausalLMDataset(DefaultConfig):
     add_eos_token_to_answer: bool = True
     limit_chained_samples: bool = False
     mask_prompt_labels: bool = True
+    mask_prompt_user_text_only: bool = True
     only_last_answer: bool = False
 
     _allowed_file_extensions: tuple[str, ...] = (
@@ -150,6 +151,11 @@ class ConfigNLPCausalLMDataset(DefaultConfig):
         self._nesting.add(
             ["text_system_start", "add_eos_token_to_system"],
             [Dependency(key="system_column", value="None", is_set=False)],
+        )
+
+        self._nesting.add(
+            ["mask_prompt_user_text_only"],
+            [Dependency(key="mask_prompt_labels", value=True, is_set=True)],
         )
 
         self._nesting.add(
