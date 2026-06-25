@@ -2,11 +2,127 @@ import logging
 
 import numpy as np
 import pandas as pd
+import torch
 
 from llm_studio.src.datasets.text_utils import clean_missing_text_values, get_texts
 from llm_studio.src.utils.utils import PatchedAttribute
 
 logger = logging.getLogger(__name__)
+
+PLAIN_TEXT_COLUMN = "Text"
+PLAIN_TEXT_PROMPT = "__LLM_STUDIO_PLAIN_TEXT_SAMPLE__"
+
+
+def _configured_text_columns(cfg) -> list[str]:
+    columns: list[str] = []
+
+    prompt_column = getattr(cfg.dataset, "prompt_column", [])
+    if isinstance(prompt_column, str):
+        columns.append(prompt_column)
+    else:
+        columns.extend(list(prompt_column))
+
+    answer_column = getattr(cfg.dataset, "answer_column", None)
+    if isinstance(answer_column, str):
+        columns.append(answer_column)
+    elif isinstance(answer_column, (list, tuple)):
+        columns.extend(list(answer_column))
+
+    system_column = getattr(cfg.dataset, "system_column", "None")
+    if system_column not in ("None", None):
+        columns.append(system_column)
+
+    return list(dict.fromkeys([column for column in columns if column != PLAIN_TEXT_COLUMN]))
+
+
+def get_plain_text_mask(df: pd.DataFrame, cfg) -> pd.Series:
+    """Return rows that should be trained as raw text instead of chat turns."""
+    if PLAIN_TEXT_COLUMN not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    text_values = clean_missing_text_values(df[PLAIN_TEXT_COLUMN])
+    has_text = text_values.str.strip() != ""
+    configured_text_columns_are_empty = pd.Series(True, index=df.index)
+
+    for column in _configured_text_columns(cfg):
+        if column in df.columns:
+            configured_text_columns_are_empty &= (
+                clean_missing_text_values(df[column]).str.strip() == ""
+            )
+
+    return has_text & configured_text_columns_are_empty
+
+
+def prepare_plain_text_rows_for_chaining(df: pd.DataFrame, cfg) -> pd.DataFrame:
+    """Give raw Text rows unique IDs so they do not collapse into one chain."""
+    plain_text_mask = get_plain_text_mask(df, cfg)
+    if not plain_text_mask.any():
+        return df
+
+    df = df.copy()
+    id_column = getattr(cfg.dataset, "id_column", "id")
+    parent_id_column = getattr(cfg.dataset, "parent_id_column", "None")
+
+    if id_column not in df.columns:
+        df[id_column] = np.arange(len(df), dtype=object)
+
+    df[id_column] = df[id_column].astype(object)
+    plain_positions = np.flatnonzero(plain_text_mask.to_numpy())
+    df.loc[plain_text_mask, id_column] = [
+        f"__plain_text_row_{position}__" for position in plain_positions
+    ]
+
+    if parent_id_column not in ("None", None):
+        if parent_id_column not in df.columns:
+            df[parent_id_column] = None
+        df[parent_id_column] = df[parent_id_column].astype(object)
+        df.loc[plain_text_mask, parent_id_column] = None
+
+    return df
+
+
+def _patch_plain_text_custom_dataset() -> None:
+    """Teach the default Causal LM dataset how to encode raw Text rows."""
+    try:
+        from llm_studio.src.datasets import text_causal_language_modeling_ds
+    except Exception:
+        return
+
+    dataset_cls = text_causal_language_modeling_ds.CustomDataset
+    if getattr(dataset_cls, "_plain_text_patch_applied", False):
+        return
+
+    original_get_prompt_encoding_and_mask = dataset_cls._get_prompt_encoding_and_mask
+    original_get_input_ids_labels_and_encodings = (
+        dataset_cls._get_input_ids_labels_and_encodings
+    )
+
+    def _get_prompt_encoding_and_mask(self, prompt: str):
+        if prompt == PLAIN_TEXT_PROMPT:
+            return torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.bool)
+        return original_get_prompt_encoding_and_mask(self, prompt)
+
+    def _get_input_ids_labels_and_encodings(
+        self, idx: int, augment: bool = True, trim_to_max_length: bool = True
+    ):
+        try:
+            input_text_dict = self.conversation_chain_handler[idx]
+            if input_text_dict["prompts"][-1] == PLAIN_TEXT_PROMPT:
+                # Keep continued-pretraining text rows pure. Random parent augmentation
+                # would otherwise prepend unrelated chat context to a raw text sample.
+                augment = False
+        except Exception:
+            pass
+        return original_get_input_ids_labels_and_encodings(
+            self,
+            idx,
+            augment=augment,
+            trim_to_max_length=trim_to_max_length,
+        )
+
+    dataset_cls._get_prompt_encoding_and_mask = _get_prompt_encoding_and_mask
+    dataset_cls._get_input_ids_labels_and_encodings = _get_input_ids_labels_and_encodings
+    dataset_cls._plain_text_patch_applied = True
 
 
 class ConversationChainHandler:
@@ -56,10 +172,38 @@ class ConversationChainHandler:
     ):
         # Do not set self.cfg = cfg, as ConversationChainHandler
         # will be used with PatchedAttribute context manager.
+        self.plain_text_mask = get_plain_text_mask(df, cfg)
         self.conversation_chain_ids = self.get_conversation_chain_ids(cfg, df)
         self.prompts = get_texts(df, cfg)
         self.answers = self.get_answers(df, cfg)
         self.systems = self.get_systems(cfg, df)
+        self._apply_plain_text_rows(df)
+
+    def _apply_plain_text_rows(self, df):
+        if not self.plain_text_mask.any():
+            return
+
+        _patch_plain_text_custom_dataset()
+        plain_texts = clean_missing_text_values(df[PLAIN_TEXT_COLUMN]).tolist()
+        plain_text_flags = self.plain_text_mask.tolist()
+        self.prompts = [
+            PLAIN_TEXT_PROMPT if is_plain_text else prompt
+            for prompt, is_plain_text in zip(
+                self.prompts, plain_text_flags, strict=False
+            )
+        ]
+        self.answers = [
+            plain_texts[idx] if is_plain_text else answer
+            for idx, (answer, is_plain_text) in enumerate(
+                zip(self.answers, plain_text_flags, strict=False)
+            )
+        ]
+        self.systems = [
+            "" if is_plain_text else system
+            for system, is_plain_text in zip(
+                self.systems, plain_text_flags, strict=False
+            )
+        ]
 
     def get_conversation_chain_ids(self, cfg, df):
         """
@@ -74,6 +218,8 @@ class ConversationChainHandler:
         if limit_chained_samples is True, df.iloc[13] will have no parent_id,
         i.e. it is the start of the conversation.
         """
+        df = prepare_plain_text_rows_for_chaining(df, cfg)
+
         if (
             cfg.dataset.parent_id_column in ["None", None]
             # Handle case where train Dataframe has conversation chains,
