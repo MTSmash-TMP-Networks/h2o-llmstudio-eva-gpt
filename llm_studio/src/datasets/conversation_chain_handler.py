@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 PLAIN_TEXT_COLUMN = "Text"
 PLAIN_TEXT_PROMPT = "__LLM_STUDIO_PLAIN_TEXT_SAMPLE__"
+AUXILIARY_TEXT_COLUMNS = ("Kontext", "context")
+
+
+def text_column_training_enabled(cfg) -> bool:
+    return bool(getattr(cfg.dataset, "train_text_column", True))
 
 
 def _configured_text_columns(cfg) -> list[str]:
@@ -32,12 +37,14 @@ def _configured_text_columns(cfg) -> list[str]:
     if system_column not in ("None", None):
         columns.append(system_column)
 
+    columns.extend(AUXILIARY_TEXT_COLUMNS)
+
     return list(dict.fromkeys([column for column in columns if column != PLAIN_TEXT_COLUMN]))
 
 
 def get_plain_text_mask(df: pd.DataFrame, cfg) -> pd.Series:
     """Return rows that should be trained as raw text instead of chat turns."""
-    if PLAIN_TEXT_COLUMN not in df.columns:
+    if not text_column_training_enabled(cfg) or PLAIN_TEXT_COLUMN not in df.columns:
         return pd.Series(False, index=df.index)
 
     text_values = clean_missing_text_values(df[PLAIN_TEXT_COLUMN])
