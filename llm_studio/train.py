@@ -311,7 +311,9 @@ def run_train(
             )
 
             # Only need to sync gradients at true optimizer update steps.
-            model.require_backward_grad_sync = is_update_step
+            # DeepSpeed owns accumulation/synchronization internally.
+            if not cfg.environment.use_deepspeed:
+                model.require_backward_grad_sync = is_update_step
 
             # Forward pass
             with autocast(
@@ -334,7 +336,11 @@ def run_train(
             # as grad_accumulations sums up the gradients, this loss must be scaled
             # by the number of grad_accumulations, to have similar behavior for
             # BS * grad_accumulations = const.
-            if cfg.training.grad_accumulation != 1:
+            # DeepSpeed already receives gradient_accumulation_steps in its config.
+            if (
+                cfg.training.grad_accumulation != 1
+                and not cfg.environment.use_deepspeed
+            ):
                 loss = loss / cfg.training.grad_accumulation
 
             # Backward pass
@@ -356,23 +362,27 @@ def run_train(
             else:
                 if cfg.environment.use_deepspeed:
                     model.backward(loss)  # type: ignore[operator]
+                    # DeepSpeed handles accumulation, optimizer step, zero grad,
+                    # gradient clipping from config, and scheduler stepping.
+                    model.step()  # type: ignore[operator]
                 else:
                     loss.backward()
-                if is_update_step:
-                    if cfg.training.gradient_clip > 0:
-                        torch.nn.utils.clip_grad_norm_(
-                            model.parameters(), cfg.training.gradient_clip
-                        )
-                    # DeepSpeed receives gradient_accumulation_steps in its config,
-                    # but this loop still owns the explicit optimizer/scheduler calls,
-                    # so gate them on the same true update-step boundary.
-                    optimizer.step()
-                    optimizer.zero_grad(set_to_none=True)
+                    if is_update_step:
+                        if cfg.training.gradient_clip > 0:
+                            torch.nn.utils.clip_grad_norm_(
+                                model.parameters(), cfg.training.gradient_clip
+                            )
+                        optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
 
             if cfg.environment._distributed:
                 torch.cuda.synchronize(device=cfg.environment._local_rank)
 
-            if is_update_step and scheduler is not None:
+            if (
+                is_update_step
+                and scheduler is not None
+                and not cfg.environment.use_deepspeed
+            ):
                 scheduler.step()
 
             if cfg.environment._local_rank == 0:
@@ -537,7 +547,7 @@ def run(cfg: DefaultConfigProblemBase) -> float:
 
         cfg.environment._world_size = torch.distributed.get_world_size()
         cfg.environment._rank = torch.distributed.get_rank()
-        torch.cuda.set_device(cfg.environment._rank)
+        torch.cuda.set_device(cfg.environment._local_rank)
         logger.info(
             f"Training in distributed mode with multiple processes, "
             f"1 GPU per process. Process {cfg.environment._rank}, "

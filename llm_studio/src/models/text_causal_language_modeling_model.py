@@ -44,20 +44,32 @@ class Model(nn.Module):
         if self.cfg.prediction.metric == "Perplexity":
             self.perplexity = Perplexity(self.cfg, reduce=False)
 
-    def init_deepspeed(self):
-        self.backward = self.backbone.backward
-        self.save_checkpoint = self.backbone.save_checkpoint
-        self.save_16bit_model = self.backbone.save_16bit_model
+    def _get_deepspeed_engine(self):
+        """
+        Return the active DeepSpeed engine.
+
+        In the non-LoRA path, the backbone itself is replaced by the engine.
+        In the LoRA path, the wrapped base model is replaced by the engine.
+        """
         if self.cfg.training.lora:
-            self.backbone.base_model.model.config = (
-                self.backbone.base_model.model.module.config
-            )
+            return self.backbone.base_model.model
+        return self.backbone
+
+    def init_deepspeed(self):
+        engine = self._get_deepspeed_engine()
+
+        self.backward = engine.backward
+        self.step = engine.step
+        self.save_checkpoint = engine.save_checkpoint
+        self.save_16bit_model = engine.save_16bit_model
+        if self.cfg.training.lora:
+            self.backbone.base_model.model.config = engine.module.config
             self.backbone.base_model.model.generation_config = (
-                self.backbone.base_model.model.module.generation_config
+                engine.module.generation_config
             )
         else:
-            self.backbone.config = self.backbone.module.config
-            self.backbone.generation_config = self.backbone.module.generation_config
+            self.backbone.config = engine.module.config
+            self.backbone.generation_config = engine.module.generation_config
 
     def generate(self, batch: dict, cfg: Any, streamer=None):
         if cfg.environment.use_deepspeed and cfg.training.lora:

@@ -427,16 +427,17 @@ class CustomDataset(Dataset):
         """
         Quick check whether Dataframe and configurations are correctly set.
         """
-        if cfg.dataset.parent_id_column != "None":
+        has_parent_column = (
+            cfg.dataset.parent_id_column not in ("None", None)
+            and cfg.dataset.parent_id_column in df.columns
+        )
+
+        if has_parent_column:
             assert cfg.dataset.id_column != cfg.dataset.parent_id_column, (
                 "'Id Column' should be different from 'Parent column'"
             )
 
-        if (
-            cfg.dataset.parent_id_column is not None
-            and cfg.dataset.parent_id_column in df.columns
-            and cfg.dataset.id_column in df.columns
-        ):
+        if has_parent_column and cfg.dataset.id_column in df.columns:
             assert (
                 df[cfg.dataset.parent_id_column] != df[cfg.dataset.id_column]
             ).all(), (
@@ -462,15 +463,12 @@ class CustomDataset(Dataset):
             f" column {cfg.dataset.answer_column}"
             " contains missing values."
         )
-        if cfg.dataset.parent_id_column != "None":
+        if has_parent_column:
             assert cfg.dataset.id_column in df.columns, (
                 "When using Parent Column, set 'Id Column' in the previous screen. "
             )
 
-        if (
-            cfg.dataset.parent_id_column != "None"
-            and df[cfg.dataset.parent_id_column].notna().any()
-        ):
+        if has_parent_column and df[cfg.dataset.parent_id_column].notna().any():
             # Comprehensive checks for conversation chaining
             parent_id_list = df[cfg.dataset.parent_id_column].tolist()
             id_list = df[cfg.dataset.id_column].tolist()
@@ -550,9 +548,7 @@ class CustomDataset(Dataset):
                     or idx == len(answer_encodings) - 1
                 ):
                     if (
-                        getattr(
-                            self.cfg.dataset, "mask_prompt_user_text_only", False
-                        )
+                        getattr(self.cfg.dataset, "mask_prompt_user_text_only", False)
                         and prompt_label_masks is not None
                     ):
                         prompt_mask = prompt_label_masks[idx]
