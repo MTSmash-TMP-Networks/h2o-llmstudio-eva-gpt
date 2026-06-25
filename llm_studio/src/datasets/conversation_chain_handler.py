@@ -8,6 +8,77 @@ from llm_studio.src.utils.utils import PatchedAttribute
 
 logger = logging.getLogger(__name__)
 
+PLAIN_TEXT_COLUMN = "Text"
+PLAIN_TEXT_PROMPT = "__LLM_STUDIO_PLAIN_TEXT_SAMPLE__"
+
+
+def _configured_text_columns(cfg) -> list[str]:
+    columns: list[str] = []
+
+    prompt_column = getattr(cfg.dataset, "prompt_column", [])
+    if isinstance(prompt_column, str):
+        columns.append(prompt_column)
+    else:
+        columns.extend(list(prompt_column))
+
+    answer_column = getattr(cfg.dataset, "answer_column", None)
+    if isinstance(answer_column, str):
+        columns.append(answer_column)
+    elif isinstance(answer_column, (list, tuple)):
+        columns.extend(list(answer_column))
+
+    system_column = getattr(cfg.dataset, "system_column", "None")
+    if system_column not in ("None", None):
+        columns.append(system_column)
+
+    return list(dict.fromkeys([column for column in columns if column != PLAIN_TEXT_COLUMN]))
+
+
+def get_plain_text_mask(df: pd.DataFrame, cfg) -> pd.Series:
+    """Return rows that should be trained as raw text instead of chat turns."""
+    if PLAIN_TEXT_COLUMN not in df.columns:
+        return pd.Series(False, index=df.index)
+
+    text_values = clean_missing_text_values(df[PLAIN_TEXT_COLUMN])
+    has_text = text_values.str.strip() != ""
+    configured_text_columns_are_empty = pd.Series(True, index=df.index)
+
+    for column in _configured_text_columns(cfg):
+        if column in df.columns:
+            configured_text_columns_are_empty &= (
+                clean_missing_text_values(df[column]).str.strip() == ""
+            )
+
+    return has_text & configured_text_columns_are_empty
+
+
+def prepare_plain_text_rows_for_chaining(df: pd.DataFrame, cfg) -> pd.DataFrame:
+    """Give raw Text rows unique IDs so they do not collapse into one chain."""
+    plain_text_mask = get_plain_text_mask(df, cfg)
+    if not plain_text_mask.any():
+        return df
+
+    df = df.copy()
+    id_column = getattr(cfg.dataset, "id_column", "id")
+    parent_id_column = getattr(cfg.dataset, "parent_id_column", "None")
+
+    if id_column not in df.columns:
+        df[id_column] = np.arange(len(df), dtype=object)
+
+    df[id_column] = df[id_column].astype(object)
+    plain_positions = np.flatnonzero(plain_text_mask.to_numpy())
+    df.loc[plain_text_mask, id_column] = [
+        f"__plain_text_row_{position}__" for position in plain_positions
+    ]
+
+    if parent_id_column not in ("None", None):
+        if parent_id_column not in df.columns:
+            df[parent_id_column] = None
+        df[parent_id_column] = df[parent_id_column].astype(object)
+        df.loc[plain_text_mask, parent_id_column] = None
+
+    return df
+
 
 class ConversationChainHandler:
     """
@@ -74,6 +145,8 @@ class ConversationChainHandler:
         if limit_chained_samples is True, df.iloc[13] will have no parent_id,
         i.e. it is the start of the conversation.
         """
+        df = prepare_plain_text_rows_for_chaining(df, cfg)
+
         if (
             cfg.dataset.parent_id_column in ["None", None]
             # Handle case where train Dataframe has conversation chains,
