@@ -68,7 +68,7 @@ def test_sliding_window_indexes_untrimmed_conversation_turns():
     ):
         dataset = CustomDataset(df, _cfg(), mode="train")
 
-    assert dataset.sample_index[-2:] == [(2, 0), (2, 5)]
+    assert dataset.sample_index[-2:] == [(2, 0, 0), (2, 5, 5)]
 
     first_window = dataset[len(dataset) - 2]
     second_window = dataset[len(dataset) - 1]
@@ -87,6 +87,38 @@ def test_sliding_window_indexes_untrimmed_conversation_turns():
     assert "a1" in trained_label_text
     assert "a2" in trained_label_text
     assert "a3" in trained_label_text
+
+    second_labels = second_window["labels"][:10]
+    assert second_labels[:5].tolist() == [-100] * 5
+    assert second_labels[5:].tolist() == [-100, -100, ord(" "), ord("a"), ord("3")]
+
+
+def test_sliding_window_starts_mask_actual_duplicate_prefix_for_shifted_final_window():
+    windows = CustomDataset._get_sliding_window_starts_and_prefix_masks(
+        sample_length=25,
+        max_length=10,
+        overlap=2,
+    )
+
+    assert windows == [(0, 0), (8, 2), (15, 3)]
+
+
+def test_sliding_window_prefix_masks_handle_edge_cases():
+    assert CustomDataset._get_sliding_window_starts_and_prefix_masks(9, 10, 2) == [
+        (0, 0)
+    ]
+    assert CustomDataset._get_sliding_window_starts_and_prefix_masks(25, 10, 0) == [
+        (0, 0),
+        (10, 0),
+        (15, 5),
+    ]
+    assert CustomDataset._get_sliding_window_starts_and_prefix_masks(5, 1, 99) == [
+        (0, 0),
+        (1, 0),
+        (2, 0),
+        (3, 0),
+        (4, 0),
+    ]
 
 
 def test_sliding_window_train_insight_prompt_matches_window_context():
@@ -110,4 +142,4 @@ def test_sliding_window_train_insight_prompt_matches_window_context():
         second_window["prompt_attention_mask"].bool()
     ]
 
-    assert "".join(chr(token) for token in prompt_tokens.tolist()) == "p2 p3 "
+    assert "".join(chr(token) for token in prompt_tokens.tolist()) == "p2 a2p3"

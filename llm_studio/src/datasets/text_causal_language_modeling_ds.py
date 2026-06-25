@@ -34,16 +34,18 @@ class CustomDataset(Dataset):
     def __len__(self) -> int:
         return len(self.sample_index)
 
-    def _build_sample_index(self) -> list[tuple[int, int | None]]:
+    def _build_sample_index(self) -> list[tuple[int, int | None, int]]:
         """Build index entries for truncation, skip, and sliding-window modes."""
         strategy = getattr(self.cfg.tokenizer, "long_sample_strategy", "Truncate")
         if strategy not in ["Truncate", "Sliding Window", "Skip"]:
             strategy = "Truncate"
         max_length = self.cfg.tokenizer.max_length
-        sample_index: list[tuple[int, int | None]] = []
+        sample_index: list[tuple[int, int | None, int]] = []
 
         if self.mode != "train" or strategy == "Truncate":
-            return [(idx, None) for idx in range(len(self.conversation_chain_handler))]
+            return [
+                (idx, None, 0) for idx in range(len(self.conversation_chain_handler))
+            ]
 
         skipped_samples = 0
         created_windows = 0
@@ -54,23 +56,22 @@ class CustomDataset(Dataset):
             sample_length = len(input_ids)
 
             if sample_length <= max_length:
-                sample_index.append((idx, None))
+                sample_index.append((idx, None, 0))
             elif strategy == "Skip":
                 skipped_samples += 1
             elif strategy == "Sliding Window":
-                overlap = min(
-                    max(getattr(self.cfg.tokenizer, "sliding_window_overlap", 0), 0),
-                    max_length - 1,
+                windows = self._get_sliding_window_starts_and_prefix_masks(
+                    sample_length=sample_length,
+                    max_length=max_length,
+                    overlap=getattr(self.cfg.tokenizer, "sliding_window_overlap", 0),
                 )
-                stride = max_length - overlap
-                starts = list(range(0, sample_length - max_length + 1, stride))
-                last_start = sample_length - max_length
-                if starts[-1] != last_start:
-                    starts.append(last_start)
-                sample_index.extend((idx, start) for start in starts)
-                created_windows += len(starts)
+                sample_index.extend(
+                    (idx, start, prefix_label_mask_len)
+                    for start, prefix_label_mask_len in windows
+                )
+                created_windows += len(windows)
             else:
-                sample_index.append((idx, None))
+                sample_index.append((idx, None, 0))
 
         if strategy == "Skip":
             logger.info(
@@ -87,6 +88,45 @@ class CustomDataset(Dataset):
             )
 
         return sample_index
+
+    @staticmethod
+    def _get_sliding_window_starts_and_prefix_masks(
+        sample_length: int,
+        max_length: int,
+        overlap: int,
+    ) -> list[tuple[int, int]]:
+        """Return window starts and duplicated-prefix label mask lengths.
+
+        Overlapping tokens remain in ``input_ids`` so the model can use them as
+        left context across window boundaries. Their labels are masked in later
+        windows because those tokens were already trained in the preceding
+        window. The final window is shifted to include the sample end, so it can
+        duplicate more tokens than the configured overlap.
+        """
+        if max_length <= 0:
+            return [(0, 0)]
+        if sample_length <= max_length:
+            return [(0, 0)]
+
+        overlap = min(max(overlap, 0), max(max_length - 1, 0))
+        stride = max(max_length - overlap, 1)
+        last_start = max(sample_length - max_length, 0)
+        starts = list(range(0, last_start + 1, stride))
+        if not starts or starts[-1] != last_start:
+            starts.append(last_start)
+
+        windows: list[tuple[int, int]] = []
+        previous_start: int | None = None
+        for current_start in starts:
+            prefix_label_mask_len = 0
+            if previous_start is not None:
+                previous_end = previous_start + max_length
+                duplicate_prefix_len = max(0, previous_end - current_start)
+                prefix_label_mask_len = min(duplicate_prefix_len, max_length)
+            windows.append((current_start, prefix_label_mask_len))
+            previous_start = current_start
+
+        return windows
 
     def _prepare_input_text_dict(self, idx: int) -> dict[str, list[str]]:
         input_text_dict = self.conversation_chain_handler[idx]
@@ -126,7 +166,7 @@ class CustomDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         """Reads a single text observation."""
-        original_idx, window_start = self.sample_index[idx]
+        original_idx, window_start, prefix_label_mask_len = self.sample_index[idx]
         use_long_sample_windows = (
             self.mode == "train"
             and getattr(self.cfg.tokenizer, "long_sample_strategy", "Truncate")
@@ -144,6 +184,11 @@ class CustomDataset(Dataset):
             window_end = window_start + self.cfg.tokenizer.max_length
             input_ids = input_ids[window_start:window_end]
             labels = labels[window_start:window_end]
+            if prefix_label_mask_len > 0:
+                # Keep duplicated overlap tokens visible as context in input_ids,
+                # but remove them from the loss in later windows so repeated
+                # text is not over-weighted during training.
+                labels[: min(prefix_label_mask_len, len(labels))] = -100
 
         sample = self.pad_labels(labels, self.cfg.tokenizer.max_length)
         sample.update(
