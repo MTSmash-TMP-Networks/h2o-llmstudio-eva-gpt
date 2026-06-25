@@ -108,3 +108,41 @@ def test_regular_chat_rows_keep_prompt_masking(mock_get_tokenizer):
     assert dataset.tokenizer.decode(chat_input_ids) == "<|prompt|>Hallo<|answer|>Hi"
     assert chat_labels[:prompt_len].tolist() == [-100] * prompt_len
     assert torch.equal(chat_labels[prompt_len:], chat_input_ids[prompt_len:])
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_plain_text_rows_are_ignored_when_toggle_is_disabled(mock_get_tokenizer):
+    mock_get_tokenizer.return_value = OrdinalCharacterTokenizer()
+    df = pd.DataFrame(
+        {
+            "id": ["plain"],
+            "Benutzer": [""],
+            "Assistentin": [""],
+            "parent_id": [None],
+            "system": [""],
+            "Text": ["Plain text only"],
+        }
+    )
+    cfg = ConfigProblemBase(
+        llm_backbone="unit-test",
+        dataset=ConfigNLPCausalLMDataset(
+            prompt_column=("Benutzer",),
+            answer_column="Assistentin",
+            parent_id_column="parent_id",
+            id_column="id",
+            system_column="system",
+            text_prompt_start="<|prompt|>",
+            text_answer_separator="<|answer|>",
+            add_eos_token_to_prompt=False,
+            add_eos_token_to_answer=False,
+            mask_prompt_labels=True,
+        ),
+        tokenizer=ConfigNLPCausalLMTokenizer(max_length=128),
+    )
+    cfg.dataset.train_text_column = False
+
+    dataset = CustomDataset(df, cfg)
+    sample = dataset[0]
+    tokens = sample["input_ids"][sample["attention_mask"].bool()]
+
+    assert dataset.tokenizer.decode(tokens) == "<|prompt|><|answer|>"
