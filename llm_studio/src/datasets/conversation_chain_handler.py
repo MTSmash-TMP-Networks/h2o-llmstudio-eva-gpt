@@ -2,6 +2,7 @@ import logging
 
 import numpy as np
 import pandas as pd
+import torch
 
 from llm_studio.src.datasets.text_utils import clean_missing_text_values, get_texts
 from llm_studio.src.utils.utils import PatchedAttribute
@@ -80,6 +81,50 @@ def prepare_plain_text_rows_for_chaining(df: pd.DataFrame, cfg) -> pd.DataFrame:
     return df
 
 
+def _patch_plain_text_custom_dataset() -> None:
+    """Teach the default Causal LM dataset how to encode raw Text rows."""
+    try:
+        from llm_studio.src.datasets import text_causal_language_modeling_ds
+    except Exception:
+        return
+
+    dataset_cls = text_causal_language_modeling_ds.CustomDataset
+    if getattr(dataset_cls, "_plain_text_patch_applied", False):
+        return
+
+    original_get_prompt_encoding_and_mask = dataset_cls._get_prompt_encoding_and_mask
+    original_get_input_ids_labels_and_encodings = (
+        dataset_cls._get_input_ids_labels_and_encodings
+    )
+
+    def _get_prompt_encoding_and_mask(self, prompt: str):
+        if prompt == PLAIN_TEXT_PROMPT:
+            return torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.bool)
+        return original_get_prompt_encoding_and_mask(self, prompt)
+
+    def _get_input_ids_labels_and_encodings(
+        self, idx: int, augment: bool = True, trim_to_max_length: bool = True
+    ):
+        try:
+            input_text_dict = self.conversation_chain_handler[idx]
+            if input_text_dict["prompts"][-1] == PLAIN_TEXT_PROMPT:
+                # Keep continued-pretraining text rows pure. Random parent augmentation
+                # would otherwise prepend unrelated chat context to a raw text sample.
+                augment = False
+        except Exception:
+            pass
+        return original_get_input_ids_labels_and_encodings(
+            self,
+            idx,
+            augment=augment,
+            trim_to_max_length=trim_to_max_length,
+        )
+
+    dataset_cls._get_prompt_encoding_and_mask = _get_prompt_encoding_and_mask
+    dataset_cls._get_input_ids_labels_and_encodings = _get_input_ids_labels_and_encodings
+    dataset_cls._plain_text_patch_applied = True
+
+
 class ConversationChainHandler:
     """
     This class partitions the dataset into chains of conversations.
@@ -127,10 +172,38 @@ class ConversationChainHandler:
     ):
         # Do not set self.cfg = cfg, as ConversationChainHandler
         # will be used with PatchedAttribute context manager.
+        self.plain_text_mask = get_plain_text_mask(df, cfg)
         self.conversation_chain_ids = self.get_conversation_chain_ids(cfg, df)
         self.prompts = get_texts(df, cfg)
         self.answers = self.get_answers(df, cfg)
         self.systems = self.get_systems(cfg, df)
+        self._apply_plain_text_rows(df)
+
+    def _apply_plain_text_rows(self, df):
+        if not self.plain_text_mask.any():
+            return
+
+        _patch_plain_text_custom_dataset()
+        plain_texts = clean_missing_text_values(df[PLAIN_TEXT_COLUMN]).tolist()
+        plain_text_flags = self.plain_text_mask.tolist()
+        self.prompts = [
+            PLAIN_TEXT_PROMPT if is_plain_text else prompt
+            for prompt, is_plain_text in zip(
+                self.prompts, plain_text_flags, strict=False
+            )
+        ]
+        self.answers = [
+            plain_texts[idx] if is_plain_text else answer
+            for idx, (answer, is_plain_text) in enumerate(
+                zip(self.answers, plain_text_flags, strict=False)
+            )
+        ]
+        self.systems = [
+            "" if is_plain_text else system
+            for system, is_plain_text in zip(
+                self.systems, plain_text_flags, strict=False
+            )
+        ]
 
     def get_conversation_chain_ids(self, cfg, df):
         """
