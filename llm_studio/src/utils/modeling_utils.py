@@ -318,6 +318,8 @@ def get_ds_config(cfg: DefaultConfigProblemBase):
         "gradient_accumulation_steps": cfg.training.grad_accumulation,
         "wall_clock_breakdown": False,
     }
+    if cfg.training.gradient_clip > 0:
+        ds_config["gradient_clipping"] = cfg.training.gradient_clip
 
     if cfg.environment.deepspeed_method == "ZeRO2":
         ds_config["zero_optimization"].update(

@@ -187,8 +187,15 @@ def is_valid_data_frame(path: str, csv_rows: int = 100) -> bool:
 def sample_data(cfg: DefaultConfigProblemBase, df: pd.DataFrame) -> pd.DataFrame:
     """Sample data from the dataframe"""
 
-    if cfg.dataset.parent_id_column != "None" and "id" in df.columns:
-        parent_mapping = df.set_index("id")[cfg.dataset.parent_id_column].to_dict()
+    id_col = cfg.dataset.id_column
+    parent_col = cfg.dataset.parent_id_column
+
+    if (
+        parent_col not in ("None", None)
+        and id_col in df.columns
+        and parent_col in df.columns
+    ):
+        parent_mapping = df.set_index(id_col)[parent_col].to_dict()
 
         # A recursive function to get the root id for each node
         def get_root(node, visited_nodes=None):
@@ -210,7 +217,7 @@ def sample_data(cfg: DefaultConfigProblemBase, df: pd.DataFrame) -> pd.DataFrame
             return get_root(parent, visited_nodes)
 
         # Apply the function to assign each row the root id
-        df["root_id"] = df["id"].apply(get_root)
+        df["root_id"] = df[id_col].apply(get_root)
 
         # Sample root_ids without replacement
         root_ids = df["root_id"].unique()

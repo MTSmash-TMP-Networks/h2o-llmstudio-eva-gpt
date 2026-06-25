@@ -443,7 +443,7 @@ class ConfigNLPAugmentation(DefaultConfig):
 @dataclass
 class ConfigNLPCausalLMPrediction(DefaultConfig):
     metric_class: Any = text_causal_language_modeling_metrics.Metrics
-    metric: str = "GPT"
+    metric: str = "BLEU"
     metric_gpt_model: str = "gpt-3.5-turbo-0301"
     metric_gpt_template: str = "general"
 
