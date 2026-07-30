@@ -42,6 +42,7 @@ class ConfigNLPCausalLMDataset(DefaultConfig):
 
     data_sample: float = 1.0
     data_sample_choice: tuple[str, ...] = ("Train", "Validation")
+    train_text_column: bool = True
 
     system_column: str = "system"
     prompt_column: tuple[str, ...] = ("instruction", "input")
