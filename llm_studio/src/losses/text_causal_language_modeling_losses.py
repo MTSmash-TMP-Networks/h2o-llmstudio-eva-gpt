@@ -36,6 +36,7 @@ class TokenAveragedCrossEntropyLoss(nn.Module):
         self.cfg = cfg
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
         self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
 
     def forward(self, logits, labels):
         shift_logits = logits[..., :-1, :].contiguous()
@@ -56,7 +57,7 @@ class TokenAveragedCrossEntropyLoss(nn.Module):
             return _zero_loss_like(shift_logits)
 
         loss = self.loss_fn(shift_logits, shift_labels)
-        if self.training:
+        if self.training and self.report_loss:
             report_training_loss(loss)
         return loss
 
@@ -82,6 +83,7 @@ class StableTokenCrossEntropyLoss(nn.Module):
             getattr(training_cfg, "stable_loss_z_loss_coefficient", 0.0)
         )
         self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
 
     def forward(self, logits, labels):
         shift_logits = logits[..., :-1, :].contiguous()
@@ -114,7 +116,7 @@ class StableTokenCrossEntropyLoss(nn.Module):
         else:
             loss = cross_entropy
 
-        if self.training:
+        if self.training and self.report_loss:
             report_training_loss(loss)
         return loss
 
@@ -125,6 +127,7 @@ class SampleAveragedCrossEntropyLoss(nn.Module):
         self.cfg = cfg
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
         self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
 
     def forward(self, logits, labels):
         shift_logits = logits[..., :-1, :].contiguous()
@@ -153,7 +156,7 @@ class SampleAveragedCrossEntropyLoss(nn.Module):
             return _zero_loss_like(shift_logits)
 
         loss = sum(losses) / len(losses)
-        if self.training:
+        if self.training and self.report_loss:
             report_training_loss(loss)
         return loss
 
