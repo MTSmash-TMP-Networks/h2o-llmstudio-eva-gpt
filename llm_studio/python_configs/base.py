@@ -36,18 +36,6 @@ class DefaultConfig:
     """
 
     def __post_init__(self) -> None:
-        if (
-            self.__class__.__name__ == "ConfigNLPCausalLMDataset"
-            and self.__class__.__module__.endswith(
-                "text_causal_language_modeling_config"
-            )
-            and "train_text_column" not in self.__dict__
-        ):
-            # UI toggle for mixed chat/instruction/raw-text datasets. This is added
-            # dynamically for compatibility with existing config constructors.
-            self.__class__.__annotations__.setdefault("train_text_column", bool)
-            self.train_text_column = True
-
         self._possible_values: dict[str, Any] = dict.fromkeys(self.__dict__)
         self._visibility: dict[str, int] = dict.fromkeys(self.__dict__, 0)
         self._grid_search_values: dict[str, Any] = dict.fromkeys(self.__dict__)
