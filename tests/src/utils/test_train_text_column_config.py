@@ -10,6 +10,10 @@ def test_train_text_column_is_loaded_from_dataset_configuration():
     assert "train_text_column" in default_cfg.dataset_keys
 
 
+def test_train_text_column_refreshes_dataset_configuration():
+    assert "train_text_column" in default_cfg.dataset_trigger_keys
+
+
 def test_train_text_column_false_survives_yaml_roundtrip(tmp_path):
     cfg = ConfigProblemBase(
         llm_backbone="unit-test",

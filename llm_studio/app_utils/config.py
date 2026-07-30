@@ -127,6 +127,7 @@ default_cfg = {
     "dataset_trigger_keys": [
         "train_dataframe",
         "validation_dataframe",
+        "train_text_column",
         "parent_id_column",
     ],
     "dataset_extra_keys": [
