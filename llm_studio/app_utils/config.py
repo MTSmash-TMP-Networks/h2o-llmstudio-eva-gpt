@@ -11,7 +11,6 @@ toml_root_dir = os.path.abspath(
 app_toml_filename = os.path.join(toml_root_dir, "pyproject.toml")
 
 toml_loaded = toml.load(app_toml_filename)
-
 version = toml_loaded["project"]["version"]
 
 
@@ -85,6 +84,7 @@ else:
         "google/flan-ul2",
     ]
 
+
 default_cfg = {
     "url": url,
     "name": "MaTeLiX AI - EvaGPT LLM Studio",
@@ -115,6 +115,7 @@ default_cfg = {
     "dataset_keys": [
         "train_dataframe",
         "validation_dataframe",
+        "train_text_column",
         "system_column",
         "prompt_column",
         "rejected_prompt_column",

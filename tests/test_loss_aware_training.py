@@ -41,6 +41,19 @@ def test_stable_token_loss_handles_fully_masked_batch():
     assert logits.grad is not None
 
 
+def test_training_loss_monitor_averages_without_storing_graph():
+    _TRAINING_LOSS_MONITOR.reset()
+    loss_a = torch.tensor(2.0, requires_grad=True)
+    loss_b = torch.tensor(4.0, requires_grad=True)
+
+    report_training_loss(loss_a)
+    report_training_loss(loss_b)
+
+    assert _TRAINING_LOSS_MONITOR.loss_sum is not None
+    assert not _TRAINING_LOSS_MONITOR.loss_sum.requires_grad
+    assert _TRAINING_LOSS_MONITOR.consume() == 3.0
+
+
 def test_loss_aware_scheduler_reduces_lr_scale_on_plateau():
     _TRAINING_LOSS_MONITOR.reset()
     parameter = torch.nn.Parameter(torch.tensor(1.0))
@@ -86,3 +99,31 @@ def test_loss_aware_scheduler_reduces_lr_scale_on_spike():
     scheduler.step()
 
     assert scheduler.adaptive_scale < initial_scale
+
+
+def test_loss_aware_scheduler_recovers_lr_after_sustained_improvement():
+    _TRAINING_LOSS_MONITOR.reset()
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
+    scheduler = LossAwareCosineScheduler(
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=1000,
+        plateau_patience=5,
+        recovery_patience=2,
+        cooldown_steps=1,
+        recovery_factor=1.2,
+        recovery_threshold=0.001,
+        ema_beta=0.9,
+        fast_ema_beta=0.2,
+    )
+    scheduler.minimum_observations = 1
+    scheduler.adaptive_scale = 0.5
+
+    for loss_value in (2.0, 1.8, 1.6, 1.4, 1.2):
+        optimizer.step()
+        report_training_loss(torch.tensor(loss_value))
+        scheduler.step()
+
+    assert scheduler.adaptive_scale > 0.5
+    assert scheduler.adaptive_scale <= 1.0
