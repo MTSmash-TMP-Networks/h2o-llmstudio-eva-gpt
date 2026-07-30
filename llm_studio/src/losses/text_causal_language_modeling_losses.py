@@ -2,7 +2,11 @@ import logging
 from collections.abc import KeysView
 from typing import Any
 
+import torch
 from torch import nn
+from torch.nn import functional as F
+
+from llm_studio.src.schedulers import report_training_loss
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,7 @@ class TokenAveragedCrossEntropyLoss(nn.Module):
         self.cfg = cfg
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
         self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
 
     def forward(self, logits, labels):
         shift_logits = logits[..., :-1, :].contiguous()
@@ -51,7 +56,69 @@ class TokenAveragedCrossEntropyLoss(nn.Module):
                 )
             return _zero_loss_like(shift_logits)
 
-        return self.loss_fn(shift_logits, shift_labels)
+        loss = self.loss_fn(shift_logits, shift_labels)
+        if self.training and self.report_loss:
+            report_training_loss(loss)
+        return loss
+
+
+class StableTokenCrossEntropyLoss(nn.Module):
+    """Stable token loss with label smoothing and optional z-loss.
+
+    Label smoothing prevents the model from becoming overconfident in individual
+    tokens and often produces less erratic gradients on noisy or heterogeneous
+    instruction data. The optional z-loss penalizes very large log-partition values,
+    but defaults to zero to avoid extra memory use on long-context, large-vocabulary
+    training runs.
+    """
+
+    def __init__(self, cfg: Any):
+        super().__init__()
+        self.cfg = cfg
+        training_cfg = cfg.training
+        self.label_smoothing = float(
+            getattr(training_cfg, "stable_loss_label_smoothing", 0.01)
+        )
+        self.z_loss_coefficient = float(
+            getattr(training_cfg, "stable_loss_z_loss_coefficient", 0.0)
+        )
+        self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
+
+    def forward(self, logits, labels):
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        flat_logits = shift_logits.view(-1, shift_logits.size(-1))
+        flat_labels = shift_labels.view(-1)
+        valid_mask = flat_labels.ne(IGNORE_INDEX)
+
+        if not valid_mask.any():
+            self._empty_label_batches += 1
+            if self._empty_label_batches <= 5:
+                logger.warning(
+                    "Skipping stable loss because all shifted labels are masked "
+                    "with -100."
+                )
+            return _zero_loss_like(flat_logits)
+
+        cross_entropy = F.cross_entropy(
+            flat_logits,
+            flat_labels,
+            ignore_index=IGNORE_INDEX,
+            label_smoothing=self.label_smoothing,
+        )
+
+        if self.z_loss_coefficient > 0:
+            log_z = torch.logsumexp(flat_logits.float(), dim=-1)
+            z_loss = log_z[valid_mask].square().mean().to(cross_entropy.dtype)
+            loss = cross_entropy + self.z_loss_coefficient * z_loss
+        else:
+            loss = cross_entropy
+
+        if self.training and self.report_loss:
+            report_training_loss(loss)
+        return loss
 
 
 class SampleAveragedCrossEntropyLoss(nn.Module):
@@ -60,6 +127,7 @@ class SampleAveragedCrossEntropyLoss(nn.Module):
         self.cfg = cfg
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
         self._empty_label_batches = 0
+        self.report_loss = getattr(cfg.training, "schedule", "") == "LossAwareCosine"
 
     def forward(self, logits, labels):
         shift_logits = logits[..., :-1, :].contiguous()
@@ -87,7 +155,10 @@ class SampleAveragedCrossEntropyLoss(nn.Module):
                 )
             return _zero_loss_like(shift_logits)
 
-        return sum(losses) / len(losses)
+        loss = sum(losses) / len(losses)
+        if self.training and self.report_loss:
+            report_training_loss(loss)
+        return loss
 
 
 class Losses:
@@ -95,6 +166,7 @@ class Losses:
 
     _losses = {
         "TokenAveragedCrossEntropy": TokenAveragedCrossEntropyLoss,
+        "StableTokenCrossEntropy": StableTokenCrossEntropyLoss,
         "SampleAveragedCrossEntropy": SampleAveragedCrossEntropyLoss,
     }
 
