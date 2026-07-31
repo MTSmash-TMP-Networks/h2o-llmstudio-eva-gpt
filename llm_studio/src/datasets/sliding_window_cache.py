@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-_CACHE_VERSION = 1
+_CACHE_VERSION = 2
 
 
 def get_cache_path(dataset: Any, strategy: str) -> Path | None:
@@ -83,6 +83,9 @@ def _cache_key(dataset: Any, strategy: str) -> str:
                 "add_eos_token_to_prompt",
                 "add_eos_token_to_answer",
                 "limit_chained_samples",
+                "mask_prompt_labels",
+                "mask_prompt_user_text_only",
+                "only_last_answer",
                 "train_text_column",
                 "personalize",
             )
