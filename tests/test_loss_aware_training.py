@@ -16,6 +16,25 @@ def _cfg(**training_values):
     return SimpleNamespace(training=SimpleNamespace(**training_values))
 
 
+def _make_scheduler(**kwargs):
+    parameter = torch.nn.Parameter(torch.tensor(1.0))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
+    scheduler = LossAwareCosineScheduler(
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=1000,
+        **kwargs,
+    )
+    scheduler.minimum_observations = 1
+    return optimizer, scheduler
+
+
+def _step_with_loss(optimizer, scheduler, loss_value):
+    optimizer.step()
+    report_training_loss(torch.as_tensor(loss_value, dtype=torch.float32))
+    scheduler.step()
+
+
 def test_stable_token_loss_is_finite_and_supports_backward():
     loss_fn = StableTokenCrossEntropyLoss(_cfg())
     logits = torch.randn(2, 6, 17, requires_grad=True)
@@ -54,61 +73,112 @@ def test_training_loss_monitor_averages_without_storing_graph():
     assert _TRAINING_LOSS_MONITOR.consume() == 3.0
 
 
+def test_training_loss_monitor_reduces_non_scalar_losses():
+    _TRAINING_LOSS_MONITOR.reset()
+
+    report_training_loss(torch.tensor([2.0, 4.0]))
+
+    assert _TRAINING_LOSS_MONITOR.consume() == 3.0
+
+
 def test_loss_aware_scheduler_reduces_lr_scale_on_plateau():
     _TRAINING_LOSS_MONITOR.reset()
-    parameter = torch.nn.Parameter(torch.tensor(1.0))
-    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
-    scheduler = LossAwareCosineScheduler(
-        optimizer=optimizer,
-        num_warmup_steps=0,
-        num_training_steps=1000,
+    optimizer, scheduler = _make_scheduler(
         plateau_patience=5,
         cooldown_steps=2,
+        spike_ratio=10.0,
     )
-    scheduler.minimum_observations = 1
 
     for _ in range(7):
-        optimizer.step()
-        report_training_loss(torch.tensor(2.0))
-        scheduler.step()
+        _step_with_loss(optimizer, scheduler, 2.0)
 
     assert scheduler.adaptive_scale < 1.0
     assert optimizer.param_groups[0]["lr"] < 1e-3
 
 
-def test_loss_aware_scheduler_reduces_lr_scale_on_spike():
+def test_single_noisy_batch_does_not_reduce_lr_scale():
     _TRAINING_LOSS_MONITOR.reset()
-    parameter = torch.nn.Parameter(torch.tensor(1.0))
-    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
-    scheduler = LossAwareCosineScheduler(
-        optimizer=optimizer,
-        num_warmup_steps=0,
-        num_training_steps=1000,
+    optimizer, scheduler = _make_scheduler(
         plateau_patience=100,
-        cooldown_steps=2,
+        spike_ratio=1.05,
+        spike_patience=3,
+        ema_beta=0.98,
+        fast_ema_beta=0.2,
     )
-    scheduler.minimum_observations = 1
 
-    optimizer.step()
-    report_training_loss(torch.tensor(1.0))
-    scheduler.step()
+    for _ in range(5):
+        _step_with_loss(optimizer, scheduler, 1.0)
     initial_scale = scheduler.adaptive_scale
 
-    optimizer.step()
-    report_training_loss(torch.tensor(2.0))
-    scheduler.step()
+    _step_with_loss(optimizer, scheduler, 2.0)
+
+    assert scheduler.adaptive_scale == initial_scale
+    assert scheduler.spike_steps == 1
+
+
+def test_sustained_ema_spike_reduces_lr_scale():
+    _TRAINING_LOSS_MONITOR.reset()
+    optimizer, scheduler = _make_scheduler(
+        plateau_patience=100,
+        cooldown_steps=2,
+        spike_ratio=1.05,
+        spike_patience=3,
+        ema_beta=0.98,
+        fast_ema_beta=0.2,
+    )
+
+    for _ in range(5):
+        _step_with_loss(optimizer, scheduler, 1.0)
+    initial_scale = scheduler.adaptive_scale
+
+    for _ in range(4):
+        _step_with_loss(optimizer, scheduler, 2.0)
 
     assert scheduler.adaptive_scale < initial_scale
 
 
+def test_adaptive_scale_never_falls_below_its_own_floor():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler(min_adaptive_scale=0.1)
+
+    for _ in range(50):
+        scheduler._reduce_scale(0.5, "test")
+
+    assert scheduler.adaptive_scale == 0.1
+
+
+def test_cooldown_does_not_accumulate_plateau_or_spike_counters():
+    _TRAINING_LOSS_MONITOR.reset()
+    optimizer, scheduler = _make_scheduler(
+        plateau_patience=2,
+        cooldown_steps=3,
+        spike_ratio=10.0,
+    )
+    scheduler._reduce_scale(0.85, "test")
+
+    for _ in range(3):
+        _step_with_loss(optimizer, scheduler, 2.0)
+
+    assert scheduler.bad_steps == 0
+    assert scheduler.good_steps == 0
+    assert scheduler.spike_steps == 0
+
+
+def test_reduction_resets_plateau_reference():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler()
+    scheduler.loss_ema = 1.25
+    scheduler.fast_loss_ema = 1.25
+    scheduler.best_loss_ema = 0.9
+
+    scheduler._reduce_scale(0.85, "test")
+
+    assert scheduler.best_loss_ema == 1.25
+
+
 def test_loss_aware_scheduler_recovers_lr_after_sustained_improvement():
     _TRAINING_LOSS_MONITOR.reset()
-    parameter = torch.nn.Parameter(torch.tensor(1.0))
-    optimizer = torch.optim.AdamW([parameter], lr=1e-3)
-    scheduler = LossAwareCosineScheduler(
-        optimizer=optimizer,
-        num_warmup_steps=0,
-        num_training_steps=1000,
+    optimizer, scheduler = _make_scheduler(
         plateau_patience=5,
         recovery_patience=2,
         cooldown_steps=1,
@@ -116,14 +186,33 @@ def test_loss_aware_scheduler_recovers_lr_after_sustained_improvement():
         recovery_threshold=0.001,
         ema_beta=0.9,
         fast_ema_beta=0.2,
+        spike_ratio=10.0,
     )
-    scheduler.minimum_observations = 1
     scheduler.adaptive_scale = 0.5
 
     for loss_value in (2.0, 1.8, 1.6, 1.4, 1.2):
-        optimizer.step()
-        report_training_loss(torch.tensor(loss_value))
-        scheduler.step()
+        _step_with_loss(optimizer, scheduler, loss_value)
 
     assert scheduler.adaptive_scale > 0.5
     assert scheduler.adaptive_scale <= 1.0
+
+
+def test_legacy_collapsed_scheduler_state_is_migrated_safely():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler()
+    legacy_state = scheduler.state_dict()
+    legacy_state.pop("min_adaptive_scale")
+    legacy_state.pop("spike_patience")
+    legacy_state.pop("spike_steps")
+    legacy_state["adaptive_scale"] = 1e-5
+    legacy_state["reduction_factor"] = 0.7
+    legacy_state["spike_reduction_factor"] = 0.5
+    legacy_state["recovery_factor"] = 1.05
+
+    scheduler.load_state_dict(legacy_state)
+
+    assert scheduler.adaptive_scale == 0.1
+    assert scheduler.reduction_factor >= 0.85
+    assert scheduler.spike_reduction_factor >= 0.8
+    assert scheduler.recovery_factor >= 1.1
+    assert scheduler.spike_patience >= 5
