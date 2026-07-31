@@ -22,6 +22,8 @@ class _TrainingLossMonitor:
 
     def report(self, loss: torch.Tensor) -> None:
         detached = loss.detach().float()
+        if detached.numel() != 1:
+            detached = detached.mean()
         if not torch.isfinite(detached):
             return
         self.loss_sum = detached if self.loss_sum is None else self.loss_sum + detached
@@ -49,7 +51,9 @@ class _TrainingLossMonitor:
         values = torch.stack(
             [
                 loss_sum.to(dtype=torch.float64),
-                torch.tensor(float(self.loss_count), dtype=torch.float64, device=device),
+                torch.tensor(
+                    float(self.loss_count), dtype=torch.float64, device=device
+                ),
             ]
         )
         if distributed:
@@ -70,14 +74,12 @@ def report_training_loss(loss: torch.Tensor) -> None:
 
 
 class LossAwareCosineScheduler(LRScheduler):
-    """Cosine decay with a bounded, loss-driven learning-rate controller.
+    """Cosine decay with a conservative loss-driven learning-rate controller.
 
-    A slow EMA provides a stable loss reference while a faster EMA detects the
-    current trend. The scheduler lowers the learning rate on plateaus and strong
-    loss spikes. After a reduction, it can gradually recover the learning rate
-    when the loss resumes a sustained downward trend. Recovery is capped at the
-    normal cosine schedule, so the adaptive controller can never exceed the
-    configured base learning rate.
+    A slow EMA is the stable reference and a faster EMA tracks the recent trend.
+    Reductions require either a sustained fast-EMA spike or a genuine plateau.
+    The adaptive multiplier has its own lower bound, separate from the cosine LR
+    floor, so noisy batches can never collapse the effective learning rate to zero.
     """
 
     def __init__(
@@ -89,39 +91,48 @@ class LossAwareCosineScheduler(LRScheduler):
         last_epoch: int = -1,
         ema_beta: float = 0.98,
         fast_ema_beta: float = 0.9,
-        reduction_factor: float = 0.7,
-        spike_reduction_factor: float = 0.5,
-        recovery_factor: float = 1.05,
-        spike_ratio: float = 1.25,
+        reduction_factor: float = 0.85,
+        spike_reduction_factor: float = 0.8,
+        recovery_factor: float = 1.1,
+        spike_ratio: float = 1.08,
+        spike_patience: int = 5,
         improvement_threshold: float = 0.002,
         recovery_threshold: float = 0.003,
+        min_adaptive_scale: float = 0.1,
         plateau_patience: int | None = None,
         recovery_patience: int | None = None,
         cooldown_steps: int | None = None,
     ):
         self.num_warmup_steps = max(0, int(num_warmup_steps))
         self.num_training_steps = max(1, int(num_training_steps))
-        self.min_learning_rate_ratio = float(min_learning_rate_ratio)
-        self.ema_beta = float(ema_beta)
-        self.fast_ema_beta = float(fast_ema_beta)
-        self.reduction_factor = float(reduction_factor)
-        self.spike_reduction_factor = float(spike_reduction_factor)
-        self.recovery_factor = float(recovery_factor)
-        self.spike_ratio = float(spike_ratio)
-        self.improvement_threshold = float(improvement_threshold)
-        self.recovery_threshold = float(recovery_threshold)
+        self.min_learning_rate_ratio = min(
+            max(float(min_learning_rate_ratio), 0.0), 1.0
+        )
+        self.ema_beta = min(max(float(ema_beta), 0.0), 0.999999)
+        self.fast_ema_beta = min(max(float(fast_ema_beta), 0.0), 0.999999)
+        self.reduction_factor = min(max(float(reduction_factor), 0.0), 1.0)
+        self.spike_reduction_factor = min(
+            max(float(spike_reduction_factor), 0.0), 1.0
+        )
+        self.recovery_factor = max(float(recovery_factor), 1.0)
+        self.spike_ratio = max(float(spike_ratio), 1.0)
+        self.spike_patience = max(1, int(spike_patience))
+        self.improvement_threshold = max(float(improvement_threshold), 0.0)
+        self.recovery_threshold = max(float(recovery_threshold), 0.0)
+        self.min_adaptive_scale = min(max(float(min_adaptive_scale), 0.0), 1.0)
         self.plateau_patience = plateau_patience or max(
-            50, self.num_training_steps // 200
+            100, self.num_training_steps // 150
         )
         self.recovery_patience = recovery_patience or max(
-            5, self.plateau_patience // 4
+            5, self.plateau_patience // 5
         )
-        self.cooldown_steps = cooldown_steps or max(20, self.plateau_patience // 2)
+        self.cooldown_steps = cooldown_steps or max(50, self.plateau_patience // 2)
         self.loss_ema: float | None = None
         self.fast_loss_ema: float | None = None
         self.best_loss_ema = math.inf
         self.bad_steps = 0
         self.good_steps = 0
+        self.spike_steps = 0
         self.cooldown_remaining = 0
         self.adaptive_scale = 1.0
         self.loss_observations = 0
@@ -142,38 +153,40 @@ class LossAwareCosineScheduler(LRScheduler):
             0.5 * (1.0 + math.cos(math.pi * progress)),
         )
 
+    def _bounded_adaptive_scale(self) -> float:
+        return min(1.0, max(self.min_adaptive_scale, self.adaptive_scale))
+
+    def _combined_factor(self, step: int) -> float:
+        return max(
+            self.min_learning_rate_ratio,
+            self._cosine_factor(step) * self._bounded_adaptive_scale(),
+        )
+
+    def _effective_lr_range(self) -> tuple[float, float]:
+        factor = self._combined_factor(self.last_epoch)
+        learning_rates = [base_lr * factor for base_lr in self.base_lrs]
+        return min(learning_rates), max(learning_rates)
+
+    def _reset_detection_counters(self) -> None:
+        self.bad_steps = 0
+        self.good_steps = 0
+        self.spike_steps = 0
+
     def _update_from_loss(self, loss: float | None) -> None:
         if loss is None or not math.isfinite(loss):
             return
 
         self.loss_observations += 1
-        previous_ema = self.loss_ema
-        if previous_ema is None:
+        if self.loss_ema is None:
             self.loss_ema = loss
             self.fast_loss_ema = loss
         else:
-            self.loss_ema = self.ema_beta * previous_ema + (
+            self.loss_ema = self.ema_beta * self.loss_ema + (
                 1.0 - self.ema_beta
             ) * loss
             self.fast_loss_ema = self.fast_ema_beta * self.fast_loss_ema + (
                 1.0 - self.fast_ema_beta
             ) * loss
-
-        if self.last_epoch < self.num_warmup_steps:
-            self.best_loss_ema = min(self.best_loss_ema, self.loss_ema)
-            return
-
-        if self.cooldown_remaining > 0:
-            self.cooldown_remaining -= 1
-
-        if self.loss_observations < self.minimum_observations:
-            self.best_loss_ema = min(self.best_loss_ema, self.loss_ema)
-            return
-
-        is_spike = previous_ema is not None and loss > previous_ema * self.spike_ratio
-        if is_spike and self.cooldown_remaining == 0:
-            self._reduce_scale(self.spike_reduction_factor, "loss spike")
-            return
 
         new_best = self.loss_ema < self.best_loss_ema * (
             1.0 - self.improvement_threshold
@@ -181,16 +194,40 @@ class LossAwareCosineScheduler(LRScheduler):
         if new_best:
             self.best_loss_ema = self.loss_ema
 
-        trend_denominator = max(abs(self.loss_ema), 1e-12)
-        trend = (self.fast_loss_ema - self.loss_ema) / trend_denominator
-        is_improving = trend < -self.recovery_threshold
+        if self.last_epoch < self.num_warmup_steps:
+            self._reset_detection_counters()
+            return
 
-        if is_improving:
+        if self.loss_observations < self.minimum_observations:
+            self._reset_detection_counters()
+            return
+
+        if self.cooldown_remaining > 0:
+            self.cooldown_remaining -= 1
+            self._reset_detection_counters()
+            return
+
+        denominator = max(abs(self.loss_ema), 1e-12)
+        fast_to_slow_ratio = self.fast_loss_ema / denominator
+        relative_trend = (self.fast_loss_ema - self.loss_ema) / denominator
+
+        if fast_to_slow_ratio > self.spike_ratio:
+            self.spike_steps += 1
+            self.bad_steps = 0
+            self.good_steps = 0
+            if self.spike_steps >= self.spike_patience:
+                self._reduce_scale(
+                    self.spike_reduction_factor,
+                    f"sustained loss spike ({self.spike_steps} observations)",
+                )
+            return
+
+        self.spike_steps = 0
+        if relative_trend < -self.recovery_threshold:
             self.bad_steps = 0
             self.good_steps += 1
             if (
-                self.adaptive_scale < 1.0
-                and self.cooldown_remaining == 0
+                self._bounded_adaptive_scale() < 1.0
                 and self.good_steps >= self.recovery_patience
             ):
                 self._increase_scale(
@@ -204,52 +241,66 @@ class LossAwareCosineScheduler(LRScheduler):
             return
 
         self.bad_steps += 1
-        if self.bad_steps >= self.plateau_patience and self.cooldown_remaining == 0:
+        if self.bad_steps >= self.plateau_patience:
             self._reduce_scale(self.reduction_factor, "loss plateau")
 
     def _reduce_scale(self, factor: float, reason: str) -> None:
-        old_scale = self.adaptive_scale
+        old_scale = self._bounded_adaptive_scale()
         self.adaptive_scale = max(
-            self.min_learning_rate_ratio,
-            self.adaptive_scale * factor,
+            self.min_adaptive_scale,
+            old_scale * factor,
         )
-        self.bad_steps = 0
-        self.good_steps = 0
+        self._reset_detection_counters()
         self.cooldown_remaining = self.cooldown_steps
+        if self.loss_ema is not None:
+            self.best_loss_ema = self.loss_ema
         if self.adaptive_scale < old_scale:
+            min_lr, max_lr = self._effective_lr_range()
             logger.info(
                 "Loss-aware scheduler reduced LR scale %.6f -> %.6f (%s, "
-                "loss_ema=%.6f, fast_loss_ema=%.6f)",
+                "loss_ema=%.6f, fast_loss_ema=%.6f, effective_lr=%.3e..%.3e)",
                 old_scale,
                 self.adaptive_scale,
                 reason,
                 self.loss_ema,
                 self.fast_loss_ema,
+                min_lr,
+                max_lr,
             )
 
     def _increase_scale(self, factor: float, reason: str) -> None:
-        old_scale = self.adaptive_scale
-        self.adaptive_scale = min(1.0, self.adaptive_scale * factor)
-        self.bad_steps = 0
-        self.good_steps = 0
+        old_scale = self._bounded_adaptive_scale()
+        self.adaptive_scale = min(1.0, old_scale * factor)
+        self._reset_detection_counters()
         self.cooldown_remaining = max(1, self.cooldown_steps // 2)
         if self.adaptive_scale > old_scale:
+            min_lr, max_lr = self._effective_lr_range()
             logger.info(
                 "Loss-aware scheduler recovered LR scale %.6f -> %.6f (%s, "
-                "loss_ema=%.6f, fast_loss_ema=%.6f)",
+                "loss_ema=%.6f, fast_loss_ema=%.6f, effective_lr=%.3e..%.3e)",
                 old_scale,
                 self.adaptive_scale,
                 reason,
                 self.loss_ema,
                 self.fast_loss_ema,
+                min_lr,
+                max_lr,
             )
 
     def get_lr(self) -> list[float]:
-        factor = max(
-            self.min_learning_rate_ratio,
-            self._cosine_factor(self.last_epoch) * self.adaptive_scale,
-        )
+        factor = self._combined_factor(self.last_epoch)
         return [base_lr * factor for base_lr in self.base_lrs]
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        legacy_state = "min_adaptive_scale" not in state_dict
+        super().load_state_dict(state_dict)
+        if legacy_state:
+            self.reduction_factor = max(self.reduction_factor, 0.85)
+            self.spike_reduction_factor = max(self.spike_reduction_factor, 0.8)
+            self.recovery_factor = max(self.recovery_factor, 1.1)
+            self.spike_patience = max(getattr(self, "spike_patience", 0), 5)
+        self.adaptive_scale = self._bounded_adaptive_scale()
+        self.spike_steps = getattr(self, "spike_steps", 0)
 
     def step(self, epoch: int | None = None) -> None:
         if epoch is None:
