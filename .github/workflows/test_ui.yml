@@ -10,6 +10,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "Makefile"
+      - ".github/workflows/test_ui.yml"
   push:
     branches: [main]
     paths:
@@ -20,6 +21,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "Makefile"
+      - ".github/workflows/test_ui.yml"
   workflow_dispatch:
 
 permissions:
