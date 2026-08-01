@@ -70,8 +70,63 @@ jobs:
       - name: Install UI test dependencies
         run: uv sync --frozen --group dev
 
-      - name: Prepare workspace
-        run: mkdir -p data/user/oasst reports output/download
+      - name: Prepare local UI state
+        shell: bash
+        run: |
+          mkdir -p data/user/ci-bootstrap data/user/oasst data/dbs reports output/download
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+
+          import pandas as pd
+
+          from llm_studio.app_utils.db import Database, Dataset
+          from llm_studio.python_configs.text_causal_language_modeling_config import (
+              ConfigProblemBase,
+          )
+          from llm_studio.src.utils.config_utils import save_config_yaml
+
+          root = Path.cwd()
+          dataset_dir = root / "data" / "user" / "ci-bootstrap"
+          dataset_dir.mkdir(parents=True, exist_ok=True)
+
+          rows = 20
+          dataframe = pd.DataFrame(
+              {
+                  "id": [str(index) for index in range(rows)],
+                  "parent_id": [None] * rows,
+                  "system": ["You are a concise assistant."] * rows,
+                  "instruction": [
+                      f"Return the number {index}." for index in range(rows)
+                  ],
+                  "input": [""] * rows,
+                  "output": [str(index) for index in range(rows)],
+              }
+          )
+          train_path = dataset_dir / "train.pq"
+          dataframe.to_parquet(train_path, index=False)
+
+          cfg = ConfigProblemBase()
+          cfg.dataset.train_dataframe = str(train_path.resolve())
+          cfg.dataset.prompt_column = ("instruction",)
+          cfg.dataset.answer_column = "output"
+          cfg.dataset.parent_id_column = "None"
+          cfg.dataset.id_column = "None"
+          config_path = dataset_dir / "text_causal_language_modeling_config.yaml"
+          save_config_yaml(str(config_path), cfg)
+
+          database_path = root / "data" / "dbs" / "user.db"
+          database_path.unlink(missing_ok=True)
+          database = Database(str(database_path))
+          database.add_dataset(
+              Dataset(
+                  id=1,
+                  name="ci-bootstrap",
+                  path=str(dataset_dir.resolve()),
+                  config_file=str(config_path.resolve()),
+                  train_rows=len(dataframe),
+              )
+          )
+          PY
 
       - name: Prepare full-suite fixture
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
@@ -110,13 +165,13 @@ jobs:
 
           for attempt in {1..60}; do
             if curl --fail --silent --show-error http://127.0.0.1:10101/ >/dev/null; then
-              echo "Application is ready."
+              echo "Wave server is ready."
               exit 0
             fi
             sleep 2
           done
 
-          echo "Application did not become ready in time."
+          echo "Wave server did not become ready in time."
           cat reports/wave.log
           exit 1
 
@@ -124,9 +179,14 @@ jobs:
         shell: bash
         run: |
           uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          import time
+
           from playwright.sync_api import sync_playwright
 
           base_url = "http://127.0.0.1:10101"
+          log_path = Path("reports/wave.log")
+
           with sync_playwright() as playwright:
               browser = playwright.chromium.launch(headless=True)
               page = browser.new_page(viewport={"width": 1440, "height": 1000})
@@ -139,15 +199,40 @@ jobs:
                   raise RuntimeError(
                       f"UI returned HTTP {response.status} for {base_url}."
                   )
-              page.locator('[data-test="nav_bar"]').wait_for(
-                  state="attached",
-                  timeout=120_000,
-              )
-              body_text = page.locator("body").inner_text().strip()
-              if not body_text:
-                  raise RuntimeError("UI rendered an empty document body.")
+
+              deadline = time.monotonic() + 90
+              log_text = ""
+              while time.monotonic() < deadline:
+                  if log_path.exists():
+                      log_text = log_path.read_text(
+                          encoding="utf-8", errors="replace"
+                      )
+                  if "Traceback (most recent call last)" in log_text:
+                      raise RuntimeError(
+                          "Python UI application raised a traceback:\n"
+                          + log_text[-5000:]
+                      )
+                  if (
+                      "Initializing client ... done" in log_text
+                      and '"POST / HTTP/1.1" 200 OK' in log_text
+                  ):
+                      break
+                  page.wait_for_timeout(1000)
+              else:
+                  raise RuntimeError(
+                      "UI client did not finish initialization:\n"
+                      + log_text[-5000:]
+                  )
+
+              page.wait_for_timeout(1000)
+              body_html = page.locator("body").inner_html().strip()
+              if len(body_html) < 200:
+                  raise RuntimeError(
+                      "UI rendered an unexpectedly empty document body."
+                  )
               page.screenshot(path="reports/ui-smoke.png", full_page=True)
               browser.close()
+
           print("LLM Studio browser smoke test passed.")
           PY
 
