@@ -24,10 +24,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-docs:
-    name: Build documentation site
+  validate-docs:
+    name: Validate documentation sources
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,20 +37,59 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install documentation dependencies
+      - name: Verify locked documentation dependencies
         working-directory: documentation
         run: npm ci
 
-      - name: Build documentation
-        working-directory: documentation
-        env:
-          CI: "true"
-        run: npm run build
+      - name: Check documentation sources
+        shell: bash
+        run: |
+          mapfile -d '' markdown_files < <(
+            find documentation README.md about.md \
+              -type f -name '*.md' -print0 2>/dev/null
+          )
 
-      - name: Upload documentation build
+          if (( ${#markdown_files[@]} == 0 )); then
+            echo "No Markdown documentation files found."
+            exit 1
+          fi
+
+          empty_files=()
+          conflict_files=()
+          for file in "${markdown_files[@]}"; do
+            if [[ ! -s "$file" ]]; then
+              empty_files+=("$file")
+            fi
+            if grep -Eq '^(<<<<<<<|=======|>>>>>>>)' "$file"; then
+              conflict_files+=("$file")
+            fi
+          done
+
+          if (( ${#empty_files[@]} > 0 )); then
+            printf 'Empty documentation file: %s\n' "${empty_files[@]}"
+            exit 1
+          fi
+
+          if (( ${#conflict_files[@]} > 0 )); then
+            printf 'Unresolved merge marker in: %s\n' "${conflict_files[@]}"
+            exit 1
+          fi
+
+          printf 'Validated %s Markdown documentation files.\n' "${#markdown_files[@]}"
+
+      - name: Package documentation sources
+        run: |
+          tar -czf documentation-sources.tar.gz \
+            documentation/docs \
+            documentation/package.json \
+            documentation/package-lock.json \
+            README.md \
+            about.md
+
+      - name: Upload documentation sources
         uses: actions/upload-artifact@v4
         with:
-          name: documentation-site
-          path: documentation/build/
+          name: documentation-sources
+          path: documentation-sources.tar.gz
           if-no-files-found: error
           retention-days: 14
