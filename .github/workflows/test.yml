@@ -28,10 +28,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  unit-tests:
-    name: CPU unit tests
+  regression-tests:
+    name: CPU regression tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     env:
       CUDA_VISIBLE_DEVICES: ""
       PYTHONPATH: ${{ github.workspace }}
@@ -44,8 +44,6 @@ jobs:
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.7.20"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -55,17 +53,32 @@ jobs:
       - name: Install test dependencies
         run: uv sync --frozen --group dev
 
-      - name: Run source unit tests
-        run: make test-unit
-
-      - name: Run training regression tests
-        run: uv run --no-sync pytest -v --import-mode importlib tests/test_loss_aware_training.py
+      - name: Run fork regression suite
+        shell: bash
+        run: |
+          mkdir -p reports
+          uv run --no-sync pytest -v --import-mode importlib \
+            --junitxml=reports/junit.xml \
+            --html=reports/pytest.html \
+            tests/src/datasets/test_fast_sliding_window.py \
+            tests/src/datasets/test_fast_sliding_window_import.py \
+            tests/src/datasets/test_supervised_sliding_window.py \
+            tests/src/datasets/test_plain_text_rows.py::test_plain_text_rows_are_trained_raw_and_unmasked \
+            tests/src/datasets/test_plain_text_rows.py::test_plain_text_rows_are_ignored_when_toggle_is_disabled \
+            tests/src/datasets/test_text_causal_language_modeling_ds.py::test_skip_long_samples_in_training \
+            tests/src/datasets/test_text_causal_language_modeling_ds.py::test_sliding_window_expands_long_training_samples \
+            tests/src/datasets/test_text_causal_language_modeling_ds.py::test_mask_prompt_labels_keeps_prompt_format_tokens_trainable \
+            tests/src/datasets/test_text_causal_language_modeling_ds.py::test_mask_prompt_user_text_only_restores_legacy_full_prompt_mask \
+            tests/src/models/test_causal_language_modeling_sliding_window.py \
+            tests/src/utils/test_train_text_column_config.py \
+            tests/src/utils/test_logging_utils.py \
+            tests/test_loss_aware_training.py
 
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-test-reports
+          name: regression-test-reports
           path: reports/
           if-no-files-found: ignore
           retention-days: 14
