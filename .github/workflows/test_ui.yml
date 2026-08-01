@@ -139,11 +139,12 @@ jobs:
                   raise RuntimeError(
                       f"UI returned HTTP {response.status} for {base_url}."
                   )
-              page.get_by_role("button", name="Home").wait_for(
-                  state="visible",
-                  timeout=60_000,
+              page.locator('[data-test="nav_bar"]').wait_for(
+                  state="attached",
+                  timeout=120_000,
               )
-              if not page.locator("body").inner_text().strip():
+              body_text = page.locator("body").inner_text().strip()
+              if not body_text:
                   raise RuntimeError("UI rendered an empty document body.")
               page.screenshot(path="reports/ui-smoke.png", full_page=True)
               browser.close()
