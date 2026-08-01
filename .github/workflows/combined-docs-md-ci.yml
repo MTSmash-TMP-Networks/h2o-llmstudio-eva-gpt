@@ -34,8 +34,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-          cache-dependency-path: documentation/package-lock.json
 
       - name: Install documentation dependencies
         working-directory: documentation
