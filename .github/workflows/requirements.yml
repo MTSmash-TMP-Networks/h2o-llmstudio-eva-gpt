@@ -2,30 +2,49 @@ name: Requirements
 
 on:
   pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: requirements-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   requirements:
+    name: Verify exported requirements
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.7.20"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.10.11
-      - run: make setup
-
-      - name: Generate requirements.txt
+      - name: Regenerate requirements.txt
         run: make requirements
 
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Update requirements.txt"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify requirements.txt is up to date
+        shell: bash
+        run: |
+          if ! git diff --exit-code -- requirements.txt; then
+            echo "::error file=requirements.txt::requirements.txt is not synchronized with pyproject.toml and uv.lock. Run 'make requirements' and commit the result."
+            exit 1
+          fi
+          echo "requirements.txt is up to date."
