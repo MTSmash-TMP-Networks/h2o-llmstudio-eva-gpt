@@ -6,12 +6,14 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "requirements.txt"
+      - ".github/workflows/requirements.yml"
   push:
     branches: [main]
     paths:
       - "pyproject.toml"
       - "uv.lock"
       - "requirements.txt"
+      - ".github/workflows/requirements.yml"
   workflow_dispatch:
 
 permissions:
