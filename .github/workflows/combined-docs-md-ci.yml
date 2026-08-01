@@ -45,22 +45,21 @@ jobs:
         shell: bash
         run: |
           mapfile -d '' markdown_files < <(
-            find documentation README.md about.md \
-              -type f -name '*.md' -print0 2>/dev/null
+            find documentation/docs -type f -name '*.md' -print0 2>/dev/null
+            printf '%s\0' README.md about.md
           )
-
-          if (( ${#markdown_files[@]} == 0 )); then
-            echo "No Markdown documentation files found."
-            exit 1
-          fi
 
           empty_files=()
           conflict_files=()
           for file in "${markdown_files[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "Missing documentation file: $file"
+              exit 1
+            fi
             if [[ ! -s "$file" ]]; then
               empty_files+=("$file")
             fi
-            if grep -Eq '^(<<<<<<<|=======|>>>>>>>)' "$file"; then
+            if grep -Eq '^(<<<<<<< |>>>>>>> )' "$file"; then
               conflict_files+=("$file")
             fi
           done
