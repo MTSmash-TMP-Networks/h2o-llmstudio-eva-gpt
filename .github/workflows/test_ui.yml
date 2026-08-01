@@ -23,6 +23,12 @@ on:
       - "Makefile"
       - ".github/workflows/test_ui.yml"
   workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run dataset import and experiment end-to-end scenarios
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -64,10 +70,13 @@ jobs:
       - name: Install UI test dependencies
         run: uv sync --frozen --group dev
 
-      - name: Prepare local UI fixture
+      - name: Prepare workspace
+        run: mkdir -p data/user/oasst reports output/download
+
+      - name: Prepare full-suite fixture
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         shell: bash
         run: |
-          mkdir -p data/user/oasst reports output/download
           uv run --no-sync python - <<'PY'
           import pandas as pd
 
@@ -111,7 +120,38 @@ jobs:
           cat reports/wave.log
           exit 1
 
-      - name: Run UI tests
+      - name: Run browser smoke test
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          base_url = "http://127.0.0.1:10101"
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch(headless=True)
+              page = browser.new_page(viewport={"width": 1440, "height": 1000})
+              response = page.goto(
+                  base_url,
+                  wait_until="domcontentloaded",
+                  timeout=60_000,
+              )
+              if response is not None and not response.ok:
+                  raise RuntimeError(
+                      f"UI returned HTTP {response.status} for {base_url}."
+                  )
+              page.get_by_role("button", name="Home").wait_for(
+                  state="visible",
+                  timeout=60_000,
+              )
+              if not page.locator("body").inner_text().strip():
+                  raise RuntimeError("UI rendered an empty document body.")
+              page.screenshot(path="reports/ui-smoke.png", full_page=True)
+              browser.close()
+          print("LLM Studio browser smoke test passed.")
+          PY
+
+      - name: Run full UI end-to-end suite
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         run: |
           uv run --no-sync pytest -v \
             --junitxml=reports/junit_ui.xml \
