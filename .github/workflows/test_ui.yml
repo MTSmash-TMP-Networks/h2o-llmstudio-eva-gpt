@@ -64,6 +64,29 @@ jobs:
       - name: Install UI test dependencies
         run: uv sync --frozen --group dev
 
+      - name: Prepare local UI fixture
+        shell: bash
+        run: |
+          mkdir -p data/user/oasst reports output/download
+          uv run --no-sync python - <<'PY'
+          import pandas as pd
+
+          rows = 100
+          dataframe = pd.DataFrame(
+              {
+                  "id": [str(index) for index in range(rows)],
+                  "parent_id": [None] * rows,
+                  "system": ["You are a concise assistant."] * rows,
+                  "instruction": [
+                      f"Return the number {index}." for index in range(rows)
+                  ],
+                  "input": [""] * rows,
+                  "output": [str(index) for index in range(rows)],
+              }
+          )
+          dataframe.to_parquet("data/user/oasst/train_full.pq", index=False)
+          PY
+
       - name: Install Chromium
         run: uv run --no-sync playwright install --with-deps chromium
 
@@ -72,7 +95,6 @@ jobs:
 
       - name: Start application
         run: |
-          mkdir -p reports output/download
           nohup uv run --no-sync wave run --no-reload llm_studio.app \
             > reports/wave.log 2>&1 &
           echo $! > reports/wave.pid
