@@ -6,12 +6,14 @@ on:
       - "documentation/**"
       - "README.md"
       - "about.md"
+      - ".github/workflows/combined-docs-md-ci.yml"
   push:
     branches: [main]
     paths:
       - "documentation/**"
       - "README.md"
       - "about.md"
+      - ".github/workflows/combined-docs-md-ci.yml"
   workflow_dispatch:
 
 permissions:
