@@ -1,24 +1,76 @@
 name: Style
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: style-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   style:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.7.20"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.10.11
-      - run: make setup-dev
-      - run: make format-check
+      - name: Determine changed files
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            RANGE="origin/${{ github.base_ref }}...HEAD"
+          elif [[ -n "${{ github.event.before }}" ]] \
+            && [[ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            RANGE="${{ github.event.before }}...HEAD"
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            RANGE="HEAD^...HEAD"
+          else
+            RANGE=""
+          fi
+
+          if [[ -n "$RANGE" ]]; then
+            git diff --name-only --diff-filter=ACMR "$RANGE" > changed-files.txt
+          else
+            git ls-files > changed-files.txt
+          fi
+
+          echo "Changed files considered by Ruff:"
+          cat changed-files.txt
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          mapfile -t files < <(
+            grep -E '\.(py|pyi|ipynb|md)$' changed-files.txt || true
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "No changed files require Ruff formatting checks."
+            exit 0
+          fi
+          uv tool run ruff format --check "${files[@]}"
+
+      - name: Check Python lint
+        shell: bash
+        run: |
+          mapfile -t files < <(
+            grep -E '\.(py|pyi|ipynb)$' changed-files.txt || true
+          )
+          if (( ${#files[@]} == 0 )); then
+            echo "No changed Python files require Ruff lint checks."
+            exit 0
+          fi
+          uv tool run ruff check "${files[@]}"

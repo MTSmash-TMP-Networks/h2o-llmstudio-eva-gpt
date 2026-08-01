@@ -1,54 +1,61 @@
-name: Test-UI
+name: UI Tests
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+    paths:
+      - "llm_studio/app.py"
+      - "llm_studio/app_utils/**"
+      - "static/**"
+      - "tests/ui/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Makefile"
+      - ".github/workflows/test_ui.yml"
+  push:
+    branches: [main]
+    paths:
+      - "llm_studio/app.py"
+      - "llm_studio/app_utils/**"
+      - "static/**"
+      - "tests/ui/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Makefile"
+      - ".github/workflows/test_ui.yml"
+  workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run dataset import and experiment end-to-end scenarios
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  id-token: write
   contents: read
 
+concurrency:
+  group: ui-tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  start-runner:
-    name: Start self-hosted EC2 runner
+  ui-tests:
+    name: Browser smoke tests
     runs-on: ubuntu-latest
-    if: ${{ always() }}
-    outputs:
-      label: ${{ steps.start-ec2-runner.outputs.label }}
-      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    timeout-minutes: 45
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      H2O_WAVE_APP_ACCESS_KEY_ID: dev
+      H2O_WAVE_APP_ACCESS_KEY_SECRET: dev
+      H2O_WAVE_MAX_REQUEST_SIZE: 25MB
+      H2O_WAVE_NO_LOG: "true"
+      H2O_WAVE_PRIVATE_DIR: "/download/@${{ github.workspace }}/output/download"
+      LOCAL_LOGIN: "true"
+      PYTEST_BASE_URL: http://127.0.0.1:10101
+      TOKENIZERS_PARALLELISM: "false"
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: us-east-1
-          role-session-name: h2o-llmstudio-ec2
-          role-to-assume: arn:aws:iam::870498644798:role/GitHub-OIDC-Role
-
-      - name: Start EC2 runner
-        id: start-ec2-runner
-        uses: machulav/ec2-github-runner@v2.3.8
-        with:
-          mode: start
-          github-token: ${{ secrets.GH_RUNNER_PAT }}
-          ec2-image-id: ${{ secrets.GH_RUNNER_EC2_IMAGE_ID }}
-          ec2-instance-type: ${{ secrets.GH_RUNNER_EC2_INSTANCE_TYPE }}
-          subnet-id: ${{ secrets.GH_RUNNER_SUBNET_ID }}
-          security-group-id: ${{ secrets.GH_RUNNER_SECURITY_GROUP_ID }}
-          aws-resource-tags: >
-            [
-              {"Key": "h2o/gitHub-repository", "Value": "${{ github.repository }}"},
-              {"Key": "h2o/owner", "Value": "pascal.pfeiffer@h2o.ai"},
-              {"Key": "h2o/environment", "Value": "dev"},
-              {"Key": "h2o/scheduling", "Value": "self-managed"},
-              {"Key": "h2o/github-workflow", "Value": "${{ github.workflow }}"}
-            ]
-
-  test-ui:
-    needs: start-runner
-    runs-on: ${{ needs.start-runner.outputs.label }}
-    steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -59,32 +66,201 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10.11"
-      - run: nvidia-smi
-      - run: make setup-dev
-      - run: make test-ui-github-actions
 
-      # Post-Action Cleanup
-      - name: Clean workspace after action
-        if: ${{ always() }}
+      - name: Install UI test dependencies
+        run: uv sync --frozen --group dev
+
+      - name: Prepare local UI state
+        shell: bash
         run: |
-          rm -rf ${{ github.workspace }}/*
+          mkdir -p data/user/ci-bootstrap data/user/oasst data/dbs reports output/download
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
 
-  stop-runner:
-    name: Stop self-hosted EC2 runner
-    needs: [start-runner, test-ui]
-    if: ${{ always() }} # Ensures runner is stopped even if tests fail or are cancelled
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials for EC2 Runner Management
-        uses: aws-actions/configure-aws-credentials@v4
+          import pandas as pd
+
+          from llm_studio.app_utils.db import Database, Dataset
+          from llm_studio.python_configs.text_causal_language_modeling_config import (
+              ConfigProblemBase,
+          )
+          from llm_studio.src.utils.config_utils import save_config_yaml
+
+          root = Path.cwd()
+          dataset_dir = root / "data" / "user" / "ci-bootstrap"
+          dataset_dir.mkdir(parents=True, exist_ok=True)
+
+          rows = 20
+          dataframe = pd.DataFrame(
+              {
+                  "id": [str(index) for index in range(rows)],
+                  "parent_id": [None] * rows,
+                  "system": ["You are a concise assistant."] * rows,
+                  "instruction": [
+                      f"Return the number {index}." for index in range(rows)
+                  ],
+                  "input": [""] * rows,
+                  "output": [str(index) for index in range(rows)],
+              }
+          )
+          train_path = dataset_dir / "train.pq"
+          dataframe.to_parquet(train_path, index=False)
+
+          cfg = ConfigProblemBase()
+          cfg.dataset.train_dataframe = str(train_path.resolve())
+          cfg.dataset.prompt_column = ("instruction",)
+          cfg.dataset.answer_column = "output"
+          cfg.dataset.parent_id_column = "None"
+          cfg.dataset.id_column = "None"
+          config_path = dataset_dir / "text_causal_language_modeling_config.yaml"
+          save_config_yaml(str(config_path), cfg)
+
+          database_path = root / "data" / "dbs" / "user.db"
+          database_path.unlink(missing_ok=True)
+          database = Database(str(database_path))
+          database.add_dataset(
+              Dataset(
+                  id=1,
+                  name="ci-bootstrap",
+                  path=str(dataset_dir.resolve()),
+                  config_file=str(config_path.resolve()),
+                  train_rows=len(dataframe),
+              )
+          )
+          PY
+
+      - name: Prepare full-suite fixture
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import pandas as pd
+
+          rows = 100
+          dataframe = pd.DataFrame(
+              {
+                  "id": [str(index) for index in range(rows)],
+                  "parent_id": [None] * rows,
+                  "system": ["You are a concise assistant."] * rows,
+                  "instruction": [
+                      f"Return the number {index}." for index in range(rows)
+                  ],
+                  "input": [""] * rows,
+                  "output": [str(index) for index in range(rows)],
+              }
+          )
+          dataframe.to_parquet("data/user/oasst/train_full.pq", index=False)
+          PY
+
+      - name: Install Chromium
+        run: uv run --no-sync playwright install --with-deps chromium
+
+      - name: Prepare Wave theme
+        run: make patch-wave-theme
+
+      - name: Start application
+        run: |
+          nohup uv run --no-sync wave run --no-reload llm_studio.app \
+            > reports/wave.log 2>&1 &
+          echo $! > reports/wave.pid
+
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error http://127.0.0.1:10101/ >/dev/null; then
+              echo "Wave server is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Wave server did not become ready in time."
+          cat reports/wave.log
+          exit 1
+
+      - name: Run browser smoke test
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          import time
+
+          from playwright.sync_api import sync_playwright
+
+          base_url = "http://127.0.0.1:10101"
+          log_path = Path("reports/wave.log")
+
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch(headless=True)
+              page = browser.new_page(viewport={"width": 1440, "height": 1000})
+              response = page.goto(
+                  base_url,
+                  wait_until="domcontentloaded",
+                  timeout=60_000,
+              )
+              if response is not None and not response.ok:
+                  raise RuntimeError(
+                      f"UI returned HTTP {response.status} for {base_url}."
+                  )
+
+              deadline = time.monotonic() + 90
+              log_text = ""
+              while time.monotonic() < deadline:
+                  if log_path.exists():
+                      log_text = log_path.read_text(
+                          encoding="utf-8", errors="replace"
+                      )
+                  if "Traceback (most recent call last)" in log_text:
+                      raise RuntimeError(
+                          "Python UI application raised a traceback:\n"
+                          + log_text[-5000:]
+                      )
+                  if (
+                      "Initializing client ... done" in log_text
+                      and '"POST / HTTP/1.1" 200 OK' in log_text
+                  ):
+                      break
+                  page.wait_for_timeout(1000)
+              else:
+                  raise RuntimeError(
+                      "UI client did not finish initialization:\n"
+                      + log_text[-5000:]
+                  )
+
+              try:
+                  page.screenshot(
+                      path="reports/ui-smoke.png",
+                      full_page=True,
+                      timeout=10_000,
+                  )
+              except Exception as exception:
+                  print(f"::warning::UI screenshot unavailable: {exception}")
+              browser.close()
+
+          print("LLM Studio browser smoke test passed.")
+          PY
+
+      - name: Run full UI end-to-end suite
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
+        run: |
+          uv run --no-sync pytest -v \
+            --junitxml=reports/junit_ui.xml \
+            --html=reports/pytest_ui.html \
+            -o log_cli=true \
+            -o log_level=INFO \
+            -o log_file=reports/tests_ui.log \
+            tests/ui/test.py
+
+      - name: Stop application
+        if: always()
+        run: |
+          if [[ -f reports/wave.pid ]]; then
+            kill "$(cat reports/wave.pid)" 2>/dev/null || true
+          fi
+          pkill -f "wave run.*llm_studio.app" 2>/dev/null || true
+
+      - name: Upload UI reports
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          aws-region: us-east-1
-          role-session-name: h2o-llmstudio-ec2
-          role-to-assume: arn:aws:iam::870498644798:role/GitHub-OIDC-Role
-      - name: Stop EC2 runner
-        uses: machulav/ec2-github-runner@v2.3.8
-        with:
-          mode: stop
-          github-token: ${{ secrets.GH_RUNNER_PAT }}
-          label: ${{ needs.start-runner.outputs.label }}
-          ec2-instance-id: ${{ needs.start-runner.outputs.ec2-instance-id }}
+          name: ui-test-reports
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14

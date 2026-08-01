@@ -2,30 +2,71 @@ name: Requirements
 
 on:
   pull_request:
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+      - ".github/workflows/requirements.yml"
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+      - "requirements.txt"
+      - ".github/workflows/requirements.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: requirements-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   requirements:
+    name: Verify dependency lock
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
           version: "0.7.20"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.10.11
-      - run: make setup
+      - name: Verify uv.lock is synchronized
+        run: uv lock --check
 
-      - name: Generate requirements.txt
-        run: make requirements
+      - name: Export legacy requirements artifact
+        shell: bash
+        run: |
+          uv export \
+            --no-hashes \
+            --no-dev \
+            --no-header \
+            --frozen \
+            --format requirements-txt \
+            > generated-requirements.txt
+          grep -v "sys_platform == 'win32'" generated-requirements.txt \
+            | awk -F ';' '{print $1}' \
+            > generated-requirements-linux.txt
 
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Report legacy requirements drift
+        shell: bash
+        run: |
+          if cmp -s requirements.txt generated-requirements-linux.txt; then
+            echo "requirements.txt matches the current uv.lock export."
+          else
+            echo "::warning file=requirements.txt::requirements.txt differs from the current uv.lock export. uv.lock remains the canonical dependency source; download the generated artifact when the legacy file should be refreshed."
+          fi
+
+      - name: Upload generated requirements
+        uses: actions/upload-artifact@v4
         with:
-          commit_message: "Update requirements.txt"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: generated-requirements
+          path: generated-requirements*.txt
+          if-no-files-found: error
+          retention-days: 14
