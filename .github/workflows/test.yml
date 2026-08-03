@@ -70,6 +70,7 @@ jobs:
             tests/src/datasets/test_text_causal_language_modeling_ds.py::test_mask_prompt_labels_keeps_prompt_format_tokens_trainable \
             tests/src/datasets/test_text_causal_language_modeling_ds.py::test_mask_prompt_user_text_only_restores_legacy_full_prompt_mask \
             tests/src/models/test_causal_language_modeling_sliding_window.py \
+            tests/src/models/test_perplexity_prediction_insights.py \
             tests/src/utils/test_train_text_column_config.py \
             tests/src/utils/test_logging_utils.py \
             tests/test_loss_aware_training.py

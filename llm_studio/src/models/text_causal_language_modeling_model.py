@@ -113,6 +113,12 @@ class Model(nn.Module):
 
         if not self.training and self.cfg.prediction.metric == "Perplexity":
             outputs["perplexity"] = self.perplexity(output.logits, batch["labels"])
+            # Perplexity is calculated with teacher forcing. Generate a real
+            # autoregressive answer as well so Validation Prediction Insights can
+            # show the text that the current checkpoint would actually produce.
+            outputs["predicted_answer_ids"] = (
+                self.generate(batch, self.cfg).detach().cpu()
+            )
 
         # enable cache again if gradient checkpointing is enabled
         if self.cfg.architecture.gradient_checkpointing:
