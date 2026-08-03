@@ -163,9 +163,7 @@ def get_autoregressive_match_statistics(
         denominator = max(target_len, predicted_len)
         matching_tokens = sum(
             target_id == predicted_id
-            for target_id, predicted_id in zip(
-                target_ids, predicted_ids, strict=False
-            )
+            for target_id, predicted_id in zip(target_ids, predicted_ids, strict=False)
         )
         token_accuracy = (
             100.0 if denominator == 0 else 100.0 * matching_tokens / denominator
