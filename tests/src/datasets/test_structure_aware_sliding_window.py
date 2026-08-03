@@ -181,7 +181,9 @@ def test_small_overlap_keeps_original_window_unchanged(monkeypatch):
     labels = input_ids.clone()
     prompt_encodings = [torch.tensor([1, 2, 3])]
     answer_encodings = [torch.arange(3, 20)]
-    dataset._get_system_anchor_ids = lambda original_idx: torch.empty(0, dtype=torch.long)
+    dataset._get_system_anchor_ids = lambda original_idx: torch.empty(
+        0, dtype=torch.long
+    )
 
     window_ids, window_labels = dataset._compose_structure_aware_window(
         original_idx=0,
