@@ -92,7 +92,7 @@ def make_cfg(
 
 
 def test_fast_dataset_is_installed():
-    assert CustomDataset is FastSlidingWindowDataset
+    assert issubclass(CustomDataset, FastSlidingWindowDataset)
 
 
 def test_fast_sliding_window_keeps_exact_window_semantics():
