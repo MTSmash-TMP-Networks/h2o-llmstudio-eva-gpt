@@ -116,12 +116,13 @@ class StructureAwareSlidingWindowDataset(FastSlidingWindowDataset):
                 next_start = nominal_start
             else:
                 candidates = [
-                    candidate
-                    for candidate in preferred
-                    if lower <= candidate <= upper
+                    candidate for candidate in preferred if lower <= candidate <= upper
                 ]
                 next_start = (
-                    min(candidates, key=lambda value: (abs(value - nominal_start), value))
+                    min(
+                        candidates,
+                        key=lambda value: (abs(value - nominal_start), value),
+                    )
                     if candidates
                     else nominal_start
                 )
@@ -341,9 +342,7 @@ class StructureAwareSlidingWindowDataset(FastSlidingWindowDataset):
         )
         if anchor_length:
             anchor_ids = anchor_ids[:anchor_length]
-            window_input_ids = torch.cat(
-                [anchor_ids, window_input_ids[anchor_length:]]
-            )
+            window_input_ids = torch.cat([anchor_ids, window_input_ids[anchor_length:]])
             window_labels = torch.cat(
                 [
                     torch.full(
