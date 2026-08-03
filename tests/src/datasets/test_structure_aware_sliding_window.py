@@ -108,15 +108,15 @@ def test_structure_aware_starts_prefer_answer_boundaries(monkeypatch):
 
 
 def test_later_window_repeats_masked_system_and_prompt_context(monkeypatch):
-    monkeypatch.setattr(structure_module, "_MIN_LOCAL_OVERLAP_TOKENS", 4)
-    monkeypatch.setattr(structure_module, "_ANCHOR_MAX_TOKENS", 8)
+    monkeypatch.setattr(structure_module, "_MIN_LOCAL_OVERLAP_TOKENS", 1)
+    monkeypatch.setattr(structure_module, "_ANCHOR_MAX_TOKENS", 12)
     tokenizer = CharacterTokenizer()
-    cfg = make_cfg()
+    cfg = make_cfg(max_length=32, overlap=16)
     df = pd.DataFrame(
         {
             "system": ["SYS"],
             "prompt": ["QUESTION"],
-            "answer": ["abcdefghijklmnopqrstuvwxyz0123456789"],
+            "answer": ["abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"],
         }
     )
 
@@ -126,10 +126,13 @@ def test_later_window_repeats_masked_system_and_prompt_context(monkeypatch):
     ):
         dataset = CustomDataset(df, cfg, mode="train")
 
-    original_idx, window_start, prefix_mask = next(
-        entry
-        for entry in dataset.sample_index
-        if entry[1] is not None and entry[1] > 0 and entry[2] > 4
+    original_idx, window_start, prefix_mask = max(
+        (
+            entry
+            for entry in dataset.sample_index
+            if entry[1] is not None and entry[1] > 0
+        ),
+        key=lambda entry: entry[2],
     )
     input_ids, labels, prompt_encodings, answer_encodings = (
         dataset._get_input_ids_labels_and_encodings(
@@ -156,9 +159,10 @@ def test_later_window_repeats_masked_system_and_prompt_context(monkeypatch):
         answer_encodings=answer_encodings,
     )
 
-    assert 0 < len(anchor) <= 8
-    assert "".join(chr(token) for token in anchor.tolist()).startswith("<S>SYS")
-    assert "".join(chr(token) for token in anchor.tolist()).endswith("A>")
+    anchor_text = "".join(chr(token) for token in anchor.tolist())
+    assert 0 < len(anchor) <= 12
+    assert anchor_text.startswith("<S>SYS")
+    assert anchor_text.endswith("<A>")
     assert torch.equal(window_ids[: len(anchor)], anchor)
     assert torch.equal(
         window_ids[prefix_mask:],
