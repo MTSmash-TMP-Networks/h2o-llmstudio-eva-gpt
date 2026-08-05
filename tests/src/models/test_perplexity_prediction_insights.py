@@ -278,9 +278,7 @@ def test_perplexity_summary_uses_full_metric_set_and_generated_subset(
         output_directory=str(tmp_path),
     )
     val_outputs = {
-        "predicted_text": np.array(
-            ["alpha beta", "", "", "same wrong"], dtype=object
-        ),
+        "predicted_text": np.array(["alpha beta", "", "", "same wrong"], dtype=object),
         "prediction_generated": np.array([True, False, False, True]),
         "metrics": np.array([1.0, 2.0, 3.0, 4.0]),
     }
