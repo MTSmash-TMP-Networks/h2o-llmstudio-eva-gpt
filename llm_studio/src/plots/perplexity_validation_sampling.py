@@ -13,9 +13,7 @@ from llm_studio.src.datasets import text_causal_language_modeling_ds as base_ds
 from llm_studio.src.plots import text_causal_language_modeling_plots as base_plots
 from llm_studio.src.utils.plot_utils import PlotData, format_for_markdown_visualization
 
-_NOT_GENERATED_TEXT = (
-    "Not generated for this sample (Perplexity was still calculated)."
-)
+_NOT_GENERATED_TEXT = "Not generated for this sample (Perplexity was still calculated)."
 _GENERATED_SCOPE = "Generated insight sample"
 _PERPLEXITY_ONLY_SCOPE = "Perplexity only"
 
@@ -124,9 +122,7 @@ def _sampled_validation_summary_row(
     summary["Predicted Text"] = (
         "Generated samples are selected deterministically across the validation set."
     )
-    summary["Prediction Scope"] = (
-        f"{generated_count} generated / {total_count} total"
-    )
+    summary["Prediction Scope"] = f"{generated_count} generated / {total_count} total"
 
     sampled_columns = [
         "Metric (Strict Exact Match %)",
@@ -209,9 +205,7 @@ def plot_validation_predictions(
 
     sample_count = len(target_texts)
     generated_mask = _get_prediction_mask(val_outputs, sample_count)
-    predicted_texts = _align_predicted_texts(
-        val_outputs, generated_mask, sample_count
-    )
+    predicted_texts = _align_predicted_texts(val_outputs, generated_mask, sample_count)
     input_text_column_name = (
         "Input Text (tokenization max length setting "
         "may truncate the input text during training/inference)"
