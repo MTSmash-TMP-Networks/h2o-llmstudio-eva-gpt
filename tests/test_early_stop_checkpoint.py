@@ -132,9 +132,9 @@ def test_early_stop_preserves_existing_best_checkpoint(tmp_path):
     assert root_checkpoint.read_bytes() == b"validated-best-model"
     assert (expected_path / "checkpoint.pth").exists()
     assert (expected_path / TRAINER_STATE_FILENAME).exists()
-    assert (
-        tmp_path / EARLY_STOP_POINTER_FILENAME
-    ).read_text(encoding="utf-8").strip() == EARLY_STOP_CHECKPOINT_DIRNAME
+    assert (tmp_path / EARLY_STOP_POINTER_FILENAME).read_text(
+        encoding="utf-8"
+    ).strip() == EARLY_STOP_CHECKPOINT_DIRNAME
 
 
 def test_best_mode_uses_root_checkpoint_as_fallback_before_first_validation(tmp_path):
