@@ -44,6 +44,11 @@ from llm_studio.src.utils.data_utils import (
     get_val_dataloader,
     get_val_dataset,
 )
+from llm_studio.src.utils.early_stop import (
+    is_clean_accumulation_boundary,
+    is_early_stop_requested,
+    save_early_stop_checkpoint,
+)
 from llm_studio.src.utils.exceptions import LLMTrainingException
 from llm_studio.src.utils.export_utils import save_prediction_outputs
 from llm_studio.src.utils.gpu_utils import sync_across_processes
@@ -239,6 +244,7 @@ def run_train(
             cfg=cfg, model=model, val_dataloader=val_dataloader, val_df=val_df
         )
 
+    stop_pending = False
     for epoch in range(start_epoch, cfg.training.epochs):
         set_seed(
             cfg.environment._seed
@@ -274,17 +280,28 @@ def run_train(
 
         for itr, data in enumerate(tr_it):
             stop_training_path = os.path.join(cfg.output_directory, "stop_training")
-            if os.path.exists(stop_training_path):
+            stop_pending = stop_pending or is_early_stop_requested(
+                stop_training_path, cfg
+            )
+            if stop_pending and is_clean_accumulation_boundary(
+                itr, cfg.training.grad_accumulation
+            ):
                 logger.info(
-                    "Early stop requested. Saving last model checkpoint to "
-                    f"{cfg.output_directory}"
+                    "Early stop requested at a clean optimizer boundary. "
+                    "Saving model and trainer state."
                 )
-                save_checkpoint(model=model, path=cfg.output_directory, cfg=cfg)
-                try:
-                    os.remove(stop_training_path)
-                except FileNotFoundError:
-                    # Another process may have already consumed the stop marker.
-                    pass
+                save_early_stop_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler,
+                    cfg=cfg,
+                    epoch=epoch,
+                    iteration=itr,
+                    best_val_metric=best_val_metric,
+                    stop_training_path=stop_training_path,
+                )
+                progress_bar.close()
                 cfg.environment._stop_requested = True
                 return 0, 0
 
@@ -384,6 +401,30 @@ def run_train(
                 and not cfg.environment.use_deepspeed
             ):
                 scheduler.step()
+
+            # If the stop marker arrived while gradients were being accumulated,
+            # finish the pending optimizer update before checkpointing. This avoids
+            # silently discarding partially accumulated gradients.
+            if stop_pending and is_update_step:
+                del output_dict
+                logger.info(
+                    "Early stop reached the next optimizer boundary. "
+                    "Saving model and trainer state."
+                )
+                save_early_stop_checkpoint(
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    scaler=scaler,
+                    cfg=cfg,
+                    epoch=epoch,
+                    iteration=itr,
+                    best_val_metric=best_val_metric,
+                    stop_training_path=stop_training_path,
+                )
+                progress_bar.close()
+                cfg.environment._stop_requested = True
+                return 0, 0
 
             if cfg.environment._local_rank == 0:
                 cfg.logging._logger.log(
