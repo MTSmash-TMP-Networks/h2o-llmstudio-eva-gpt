@@ -63,13 +63,12 @@ class TokenAveragedCrossEntropyLoss(nn.Module):
 
 
 class StableTokenCrossEntropyLoss(nn.Module):
-    """Stable token loss with label smoothing and optional z-loss.
+    """Stable token loss with optional label smoothing and z-loss.
 
-    Label smoothing prevents the model from becoming overconfident in individual
-    tokens and often produces less erratic gradients on noisy or heterogeneous
-    instruction data. The optional z-loss penalizes very large log-partition values,
-    but defaults to zero to avoid extra memory use on long-context, large-vocabulary
-    training runs.
+    Label smoothing is opt-in. Keeping the default at zero avoids introducing an
+    artificial positive training-loss floor that can hide continued model
+    improvement. A non-zero value can still be supplied through
+    ``stable_loss_label_smoothing`` when deliberate smoothing is desired.
     """
 
     def __init__(self, cfg: Any):
@@ -77,7 +76,7 @@ class StableTokenCrossEntropyLoss(nn.Module):
         self.cfg = cfg
         training_cfg = cfg.training
         self.label_smoothing = float(
-            getattr(training_cfg, "stable_loss_label_smoothing", 0.01)
+            getattr(training_cfg, "stable_loss_label_smoothing", 0.0)
         )
         self.z_loss_coefficient = float(
             getattr(training_cfg, "stable_loss_z_loss_coefficient", 0.0)
