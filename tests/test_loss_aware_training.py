@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import torch
+from torch.nn import functional as F
 
 from llm_studio.src.losses.text_causal_language_modeling_losses import (
     StableTokenCrossEntropyLoss,
@@ -46,6 +47,41 @@ def test_stable_token_loss_is_finite_and_supports_backward():
     loss.backward()
     assert logits.grad is not None
     assert torch.isfinite(logits.grad).all()
+
+
+def test_stable_token_loss_defaults_to_unsmoothed_cross_entropy():
+    loss_fn = StableTokenCrossEntropyLoss(_cfg())
+    logits = torch.randn(2, 6, 17, requires_grad=True)
+    labels = torch.randint(0, 17, (2, 6))
+    labels[0, 2] = -100
+
+    loss = loss_fn(logits, labels)
+    expected = F.cross_entropy(
+        logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
+        labels[..., 1:].contiguous().view(-1),
+        ignore_index=-100,
+        label_smoothing=0.0,
+    )
+
+    assert loss_fn.label_smoothing == 0.0
+    assert torch.allclose(loss, expected)
+
+
+def test_stable_token_loss_honors_explicit_label_smoothing():
+    loss_fn = StableTokenCrossEntropyLoss(_cfg(stable_loss_label_smoothing=0.01))
+    logits = torch.randn(2, 6, 17, requires_grad=True)
+    labels = torch.randint(0, 17, (2, 6))
+
+    loss = loss_fn(logits, labels)
+    expected = F.cross_entropy(
+        logits[..., :-1, :].contiguous().view(-1, logits.size(-1)),
+        labels[..., 1:].contiguous().view(-1),
+        ignore_index=-100,
+        label_smoothing=0.01,
+    )
+
+    assert loss_fn.label_smoothing == 0.01
+    assert torch.allclose(loss, expected)
 
 
 def test_stable_token_loss_handles_fully_masked_batch():
