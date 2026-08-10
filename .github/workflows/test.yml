@@ -74,6 +74,7 @@ jobs:
             tests/src/models/test_perplexity_prediction_insights.py \
             tests/src/utils/test_train_text_column_config.py \
             tests/src/utils/test_logging_utils.py \
+            tests/test_early_stop_checkpoint.py \
             tests/test_loss_aware_training.py
 
       - name: Upload test reports
