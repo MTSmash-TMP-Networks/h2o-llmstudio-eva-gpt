@@ -63,12 +63,8 @@ def is_early_stop_requested(
         device = torch.device(getattr(cfg.environment, "_device", "cuda"))
     else:
         device = torch.device("cpu")
-    requested_tensor = torch.tensor(
-        [int(requested)], dtype=torch.int32, device=device
-    )
-    torch.distributed.all_reduce(
-        requested_tensor, op=torch.distributed.ReduceOp.MAX
-    )
+    requested_tensor = torch.tensor([int(requested)], dtype=torch.int32, device=device)
+    torch.distributed.all_reduce(requested_tensor, op=torch.distributed.ReduceOp.MAX)
     return bool(requested_tensor.item())
 
 
@@ -84,9 +80,8 @@ def get_early_stop_checkpoint_path(cfg: DefaultConfigProblemBase) -> str:
 
     output_directory = cfg.output_directory
     root_checkpoint = os.path.join(output_directory, "checkpoint.pth")
-    if (
-        getattr(cfg.training, "save_checkpoint", "last") == "best"
-        and os.path.exists(root_checkpoint)
+    if getattr(cfg.training, "save_checkpoint", "last") == "best" and os.path.exists(
+        root_checkpoint
     ):
         return os.path.join(output_directory, EARLY_STOP_CHECKPOINT_DIRNAME)
     return output_directory
@@ -188,9 +183,7 @@ def _update_early_stop_pointer(
     if not _is_primary_rank(cfg):
         return
 
-    pointer_path = os.path.join(
-        cfg.output_directory, EARLY_STOP_POINTER_FILENAME
-    )
+    pointer_path = os.path.join(cfg.output_directory, EARLY_STOP_POINTER_FILENAME)
     if os.path.abspath(checkpoint_path) == os.path.abspath(cfg.output_directory):
         try:
             os.remove(pointer_path)
