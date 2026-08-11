@@ -31,8 +31,7 @@ class _TrainingLossMonitor:
 
     def consume(self) -> float | None:
         distributed = (
-            torch.distributed.is_available()
-            and torch.distributed.is_initialized()
+            torch.distributed.is_available() and torch.distributed.is_initialized()
         )
         if self.loss_count == 0 and not distributed:
             return None
@@ -114,9 +113,7 @@ class LossAwareCosineScheduler(LRScheduler):
         self.ema_beta = min(max(float(ema_beta), 0.0), 0.999999)
         self.fast_ema_beta = min(max(float(fast_ema_beta), 0.0), 0.999999)
         self.reduction_factor = min(max(float(reduction_factor), 0.0), 1.0)
-        self.spike_reduction_factor = min(
-            max(float(spike_reduction_factor), 0.0), 1.0
-        )
+        self.spike_reduction_factor = min(max(float(spike_reduction_factor), 0.0), 1.0)
         self.recovery_factor = max(float(recovery_factor), 1.0)
         self.spike_ratio = max(float(spike_ratio), 1.0)
         self.spike_patience = max(1, int(spike_patience))
@@ -127,9 +124,7 @@ class LossAwareCosineScheduler(LRScheduler):
         self.plateau_patience = plateau_patience or max(
             100, self.num_training_steps // 150
         )
-        self.recovery_patience = recovery_patience or max(
-            5, self.plateau_patience // 5
-        )
+        self.recovery_patience = recovery_patience or max(5, self.plateau_patience // 5)
         self.cooldown_steps = cooldown_steps or max(50, self.plateau_patience // 2)
         self.loss_ema: float | None = None
         self.fast_loss_ema: float | None = None
@@ -191,12 +186,11 @@ class LossAwareCosineScheduler(LRScheduler):
             self.loss_ema = loss
             self.fast_loss_ema = loss
         else:
-            self.loss_ema = self.ema_beta * self.loss_ema + (
-                1.0 - self.ema_beta
-            ) * loss
-            self.fast_loss_ema = self.fast_ema_beta * self.fast_loss_ema + (
-                1.0 - self.fast_ema_beta
-            ) * loss
+            self.loss_ema = self.ema_beta * self.loss_ema + (1.0 - self.ema_beta) * loss
+            self.fast_loss_ema = (
+                self.fast_ema_beta * self.fast_loss_ema
+                + (1.0 - self.fast_ema_beta) * loss
+            )
 
         new_best = self.loss_ema < self.best_loss_ema * (
             1.0 - self.improvement_threshold
@@ -239,9 +233,7 @@ class LossAwareCosineScheduler(LRScheduler):
                 self._bounded_adaptive_scale() < 1.0
                 and self.good_steps >= self.recovery_patience
             ):
-                self._increase_scale(
-                    self.recovery_factor, "sustained loss improvement"
-                )
+                self._increase_scale(self.recovery_factor, "sustained loss improvement")
             return
 
         self.good_steps = 0
@@ -319,9 +311,7 @@ class LossAwareCosineScheduler(LRScheduler):
             )
             self.spike_reduction_factor = max(self.spike_reduction_factor, 0.9)
             self.spike_patience = max(getattr(self, "spike_patience", 0), 8)
-            self.min_adaptive_scale = max(
-                getattr(self, "min_adaptive_scale", 0.0), 0.2
-            )
+            self.min_adaptive_scale = max(getattr(self, "min_adaptive_scale", 0.0), 0.2)
             self.recovery_factor = max(self.recovery_factor, 1.1)
         else:
             self.trend_denominator_floor = max(
