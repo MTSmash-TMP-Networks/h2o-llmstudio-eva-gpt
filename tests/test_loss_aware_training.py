@@ -117,6 +117,42 @@ def test_training_loss_monitor_reduces_non_scalar_losses():
     assert _TRAINING_LOSS_MONITOR.consume() == 3.0
 
 
+def test_loss_aware_scheduler_uses_low_loss_safe_defaults():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler()
+
+    assert scheduler.spike_reduction_factor == 0.9
+    assert scheduler.spike_patience == 8
+    assert scheduler.min_adaptive_scale == 0.2
+    assert scheduler.trend_denominator_floor == 0.1
+
+
+def test_observed_low_loss_gap_is_not_magnified_into_false_spike():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler()
+    scheduler.loss_ema = 0.053792
+    scheduler.fast_loss_ema = 0.060804
+
+    relative_trend = scheduler._relative_loss_trend()
+
+    assert abs(relative_trend - 0.07012) < 1e-6
+    assert relative_trend < scheduler.spike_ratio - 1.0
+
+
+def test_observed_low_loss_gap_does_not_accumulate_spike_counter():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler(plateau_patience=100)
+    scheduler.loss_ema = 0.053792
+    scheduler.fast_loss_ema = 0.060804
+    scheduler.best_loss_ema = 0.053792
+    scheduler.loss_observations = scheduler.minimum_observations
+
+    scheduler._update_from_loss(0.053792)
+
+    assert scheduler.spike_steps == 0
+    assert scheduler.adaptive_scale == 1.0
+
+
 def test_loss_aware_scheduler_reduces_lr_scale_on_plateau():
     _TRAINING_LOSS_MONITOR.reset()
     optimizer, scheduler = _make_scheduler(
@@ -173,6 +209,26 @@ def test_sustained_ema_spike_reduces_lr_scale():
     assert scheduler.adaptive_scale < initial_scale
 
 
+def test_real_low_loss_spike_still_reduces_lr_scale():
+    _TRAINING_LOSS_MONITOR.reset()
+    optimizer, scheduler = _make_scheduler(
+        plateau_patience=100,
+        cooldown_steps=2,
+        spike_patience=3,
+        ema_beta=0.98,
+        fast_ema_beta=0.2,
+    )
+
+    for _ in range(5):
+        _step_with_loss(optimizer, scheduler, 0.05)
+    initial_scale = scheduler.adaptive_scale
+
+    for _ in range(4):
+        _step_with_loss(optimizer, scheduler, 0.15)
+
+    assert scheduler.adaptive_scale < initial_scale
+
+
 def test_adaptive_scale_never_falls_below_its_own_floor():
     _TRAINING_LOSS_MONITOR.reset()
     _, scheduler = _make_scheduler(min_adaptive_scale=0.1)
@@ -181,6 +237,16 @@ def test_adaptive_scale_never_falls_below_its_own_floor():
         scheduler._reduce_scale(0.5, "test")
 
     assert scheduler.adaptive_scale == 0.1
+
+
+def test_default_adaptive_scale_never_falls_below_point_two():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, scheduler = _make_scheduler()
+
+    for _ in range(50):
+        scheduler._reduce_scale(0.5, "test")
+
+    assert scheduler.adaptive_scale == 0.2
 
 
 def test_cooldown_does_not_accumulate_plateau_or_spike_counters():
@@ -233,10 +299,31 @@ def test_loss_aware_scheduler_recovers_lr_after_sustained_improvement():
     assert scheduler.adaptive_scale <= 1.0
 
 
+def test_pre_low_loss_guard_state_is_migrated_to_safe_defaults():
+    _TRAINING_LOSS_MONITOR.reset()
+    _, source_scheduler = _make_scheduler()
+    old_state = source_scheduler.state_dict()
+    old_state.pop("trend_denominator_floor")
+    old_state["adaptive_scale"] = 0.107132
+    old_state["min_adaptive_scale"] = 0.1
+    old_state["spike_reduction_factor"] = 0.8
+    old_state["spike_patience"] = 5
+
+    _, scheduler = _make_scheduler()
+    scheduler.load_state_dict(old_state)
+
+    assert scheduler.trend_denominator_floor == 0.1
+    assert scheduler.min_adaptive_scale == 0.2
+    assert scheduler.adaptive_scale == 0.2
+    assert scheduler.spike_reduction_factor == 0.9
+    assert scheduler.spike_patience == 8
+
+
 def test_legacy_collapsed_scheduler_state_is_migrated_safely():
     _TRAINING_LOSS_MONITOR.reset()
     _, scheduler = _make_scheduler()
     legacy_state = scheduler.state_dict()
+    legacy_state.pop("trend_denominator_floor")
     legacy_state.pop("min_adaptive_scale")
     legacy_state.pop("spike_patience")
     legacy_state.pop("spike_steps")
@@ -247,8 +334,9 @@ def test_legacy_collapsed_scheduler_state_is_migrated_safely():
 
     scheduler.load_state_dict(legacy_state)
 
-    assert scheduler.adaptive_scale == 0.1
+    assert scheduler.adaptive_scale == 0.2
     assert scheduler.reduction_factor >= 0.85
-    assert scheduler.spike_reduction_factor >= 0.8
+    assert scheduler.spike_reduction_factor >= 0.9
     assert scheduler.recovery_factor >= 1.1
-    assert scheduler.spike_patience >= 5
+    assert scheduler.spike_patience >= 8
+    assert scheduler.trend_denominator_floor >= 0.1
