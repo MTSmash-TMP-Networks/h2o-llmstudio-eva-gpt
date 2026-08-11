@@ -7,8 +7,8 @@ from llm_studio.src.losses.text_causal_language_modeling_losses import (
     StableTokenCrossEntropyLoss,
 )
 from llm_studio.src.schedulers import (
-    LossAwareCosineScheduler,
     _TRAINING_LOSS_MONITOR,
+    LossAwareCosineScheduler,
     report_training_loss,
 )
 
