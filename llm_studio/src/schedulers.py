@@ -31,8 +31,7 @@ class _TrainingLossMonitor:
 
     def consume(self) -> float | None:
         distributed = (
-            torch.distributed.is_available()
-            and torch.distributed.is_initialized()
+            torch.distributed.is_available() and torch.distributed.is_initialized()
         )
         if self.loss_count == 0 and not distributed:
             return None
@@ -78,7 +77,9 @@ class LossAwareCosineScheduler(LRScheduler):
 
     A slow EMA is the stable reference and a faster EMA tracks the recent trend.
     Reductions require either a sustained fast-EMA spike or a genuine plateau.
-    The adaptive multiplier has its own lower bound, separate from the cosine LR
+    Relative trend detection uses a denominator floor so tiny absolute changes at
+    already-low loss values are not amplified into false percentage spikes. The
+    adaptive multiplier also has its own lower bound, separate from the cosine LR
     floor, so noisy batches can never collapse the effective learning rate to zero.
     """
 
@@ -92,13 +93,14 @@ class LossAwareCosineScheduler(LRScheduler):
         ema_beta: float = 0.98,
         fast_ema_beta: float = 0.9,
         reduction_factor: float = 0.85,
-        spike_reduction_factor: float = 0.8,
+        spike_reduction_factor: float = 0.9,
         recovery_factor: float = 1.1,
         spike_ratio: float = 1.08,
-        spike_patience: int = 5,
+        spike_patience: int = 8,
         improvement_threshold: float = 0.002,
         recovery_threshold: float = 0.003,
-        min_adaptive_scale: float = 0.1,
+        min_adaptive_scale: float = 0.2,
+        trend_denominator_floor: float = 0.1,
         plateau_patience: int | None = None,
         recovery_patience: int | None = None,
         cooldown_steps: int | None = None,
@@ -111,21 +113,18 @@ class LossAwareCosineScheduler(LRScheduler):
         self.ema_beta = min(max(float(ema_beta), 0.0), 0.999999)
         self.fast_ema_beta = min(max(float(fast_ema_beta), 0.0), 0.999999)
         self.reduction_factor = min(max(float(reduction_factor), 0.0), 1.0)
-        self.spike_reduction_factor = min(
-            max(float(spike_reduction_factor), 0.0), 1.0
-        )
+        self.spike_reduction_factor = min(max(float(spike_reduction_factor), 0.0), 1.0)
         self.recovery_factor = max(float(recovery_factor), 1.0)
         self.spike_ratio = max(float(spike_ratio), 1.0)
         self.spike_patience = max(1, int(spike_patience))
         self.improvement_threshold = max(float(improvement_threshold), 0.0)
         self.recovery_threshold = max(float(recovery_threshold), 0.0)
         self.min_adaptive_scale = min(max(float(min_adaptive_scale), 0.0), 1.0)
+        self.trend_denominator_floor = max(float(trend_denominator_floor), 1e-12)
         self.plateau_patience = plateau_patience or max(
             100, self.num_training_steps // 150
         )
-        self.recovery_patience = recovery_patience or max(
-            5, self.plateau_patience // 5
-        )
+        self.recovery_patience = recovery_patience or max(5, self.plateau_patience // 5)
         self.cooldown_steps = cooldown_steps or max(50, self.plateau_patience // 2)
         self.loss_ema: float | None = None
         self.fast_loss_ema: float | None = None
@@ -172,6 +171,12 @@ class LossAwareCosineScheduler(LRScheduler):
         self.good_steps = 0
         self.spike_steps = 0
 
+    def _relative_loss_trend(self) -> float:
+        if self.loss_ema is None or self.fast_loss_ema is None:
+            return 0.0
+        denominator = max(abs(self.loss_ema), self.trend_denominator_floor)
+        return (self.fast_loss_ema - self.loss_ema) / denominator
+
     def _update_from_loss(self, loss: float | None) -> None:
         if loss is None or not math.isfinite(loss):
             return
@@ -181,12 +186,11 @@ class LossAwareCosineScheduler(LRScheduler):
             self.loss_ema = loss
             self.fast_loss_ema = loss
         else:
-            self.loss_ema = self.ema_beta * self.loss_ema + (
-                1.0 - self.ema_beta
-            ) * loss
-            self.fast_loss_ema = self.fast_ema_beta * self.fast_loss_ema + (
-                1.0 - self.fast_ema_beta
-            ) * loss
+            self.loss_ema = self.ema_beta * self.loss_ema + (1.0 - self.ema_beta) * loss
+            self.fast_loss_ema = (
+                self.fast_ema_beta * self.fast_loss_ema
+                + (1.0 - self.fast_ema_beta) * loss
+            )
 
         new_best = self.loss_ema < self.best_loss_ema * (
             1.0 - self.improvement_threshold
@@ -207,11 +211,10 @@ class LossAwareCosineScheduler(LRScheduler):
             self._reset_detection_counters()
             return
 
-        denominator = max(abs(self.loss_ema), 1e-12)
-        fast_to_slow_ratio = self.fast_loss_ema / denominator
-        relative_trend = (self.fast_loss_ema - self.loss_ema) / denominator
+        relative_trend = self._relative_loss_trend()
+        spike_threshold = max(self.spike_ratio - 1.0, 0.0)
 
-        if fast_to_slow_ratio > self.spike_ratio:
+        if relative_trend > spike_threshold:
             self.spike_steps += 1
             self.bad_steps = 0
             self.good_steps = 0
@@ -230,9 +233,7 @@ class LossAwareCosineScheduler(LRScheduler):
                 self._bounded_adaptive_scale() < 1.0
                 and self.good_steps >= self.recovery_patience
             ):
-                self._increase_scale(
-                    self.recovery_factor, "sustained loss improvement"
-                )
+                self._increase_scale(self.recovery_factor, "sustained loss improvement")
             return
 
         self.good_steps = 0
@@ -258,12 +259,14 @@ class LossAwareCosineScheduler(LRScheduler):
             min_lr, max_lr = self._effective_lr_range()
             logger.info(
                 "Loss-aware scheduler reduced LR scale %.6f -> %.6f (%s, "
-                "loss_ema=%.6f, fast_loss_ema=%.6f, effective_lr=%.3e..%.3e)",
+                "loss_ema=%.6f, fast_loss_ema=%.6f, trend=%+.4f, "
+                "effective_lr=%.3e..%.3e)",
                 old_scale,
                 self.adaptive_scale,
                 reason,
                 self.loss_ema,
                 self.fast_loss_ema,
+                self._relative_loss_trend(),
                 min_lr,
                 max_lr,
             )
@@ -277,12 +280,14 @@ class LossAwareCosineScheduler(LRScheduler):
             min_lr, max_lr = self._effective_lr_range()
             logger.info(
                 "Loss-aware scheduler recovered LR scale %.6f -> %.6f (%s, "
-                "loss_ema=%.6f, fast_loss_ema=%.6f, effective_lr=%.3e..%.3e)",
+                "loss_ema=%.6f, fast_loss_ema=%.6f, trend=%+.4f, "
+                "effective_lr=%.3e..%.3e)",
                 old_scale,
                 self.adaptive_scale,
                 reason,
                 self.loss_ema,
                 self.fast_loss_ema,
+                self._relative_loss_trend(),
                 min_lr,
                 max_lr,
             )
@@ -293,12 +298,26 @@ class LossAwareCosineScheduler(LRScheduler):
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         legacy_state = "min_adaptive_scale" not in state_dict
+        pre_low_loss_guard_state = "trend_denominator_floor" not in state_dict
         super().load_state_dict(state_dict)
+
         if legacy_state:
             self.reduction_factor = max(self.reduction_factor, 0.85)
-            self.spike_reduction_factor = max(self.spike_reduction_factor, 0.8)
             self.recovery_factor = max(self.recovery_factor, 1.1)
-            self.spike_patience = max(getattr(self, "spike_patience", 0), 5)
+
+        if pre_low_loss_guard_state:
+            self.trend_denominator_floor = max(
+                getattr(self, "trend_denominator_floor", 0.0), 0.1
+            )
+            self.spike_reduction_factor = max(self.spike_reduction_factor, 0.9)
+            self.spike_patience = max(getattr(self, "spike_patience", 0), 8)
+            self.min_adaptive_scale = max(getattr(self, "min_adaptive_scale", 0.0), 0.2)
+            self.recovery_factor = max(self.recovery_factor, 1.1)
+        else:
+            self.trend_denominator_floor = max(
+                float(getattr(self, "trend_denominator_floor", 0.1)), 1e-12
+            )
+
         self.adaptive_scale = self._bounded_adaptive_scale()
         self.spike_steps = getattr(self, "spike_steps", 0)
 
