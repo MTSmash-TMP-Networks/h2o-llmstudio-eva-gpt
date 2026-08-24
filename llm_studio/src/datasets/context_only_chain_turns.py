@@ -9,10 +9,7 @@ from typing import Any
 import pandas as pd
 import torch
 
-from llm_studio.src.datasets.conversation_chain_handler import (
-    ConversationChainHandler,
-    get_plain_text_mask,
-)
+from llm_studio.src.datasets.conversation_chain_handler import ConversationChainHandler
 from llm_studio.src.datasets.text_utils import clean_missing_text_values
 
 logger = logging.getLogger(__name__)
@@ -146,17 +143,20 @@ def _install_chain_endpoint_filter() -> None:
         ):
             return chains
 
-        endpoint_mask = get_supervised_answer_mask(df, cfg) | get_plain_text_mask(
-            df, cfg
-        )
+        # Remove only *valid* context-only endpoints. Terminal/orphan empty-answer
+        # rows stay untouched here so the normal validation layer can report them
+        # as malformed data, and direct dataset construction remains compatible.
+        context_only_mask = get_valid_context_only_mask(df, cfg)
         filtered = [
-            chain for chain in chains if chain and bool(endpoint_mask.iloc[chain[-1]])
+            chain
+            for chain in chains
+            if chain and not bool(context_only_mask.iloc[chain[-1]])
         ]
         removed = len(chains) - len(filtered)
         if removed:
             logger.info(
-                "Limit Chained Samples=False: retained %s answer-bearing endpoints "
-                "and treated %s empty-answer IDs as context-only turns.",
+                "Limit Chained Samples=False: retained %s supervised/terminal "
+                "endpoints and treated %s empty-answer IDs as context-only turns.",
                 len(filtered),
                 removed,
             )
