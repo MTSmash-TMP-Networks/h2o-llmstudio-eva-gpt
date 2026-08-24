@@ -86,7 +86,9 @@ def _validate_supervised_answers(df: pd.DataFrame, cfg: Any, mode: str) -> None:
 def _fill_missing_answer_cells(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
     """Let the legacy sanity check see valid context-only NaN cells as empty text."""
     answer_columns = [column for column in _answer_columns(cfg) if column in df.columns]
-    if not answer_columns or not any(df[column].isna().any() for column in answer_columns):
+    if not answer_columns or not any(
+        df[column].isna().any() for column in answer_columns
+    ):
         return df
 
     sanity_df = df.copy()
