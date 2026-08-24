@@ -25,6 +25,7 @@ def _cfg(*, strategy="Truncate", max_length=256):
         dataset=SimpleNamespace(
             train_text_column=True,
             prompt_column=("prompt",),
+            prompt_column_separator="",
             answer_column="answer",
             system_column="system",
             parent_id_column="parent_id",
