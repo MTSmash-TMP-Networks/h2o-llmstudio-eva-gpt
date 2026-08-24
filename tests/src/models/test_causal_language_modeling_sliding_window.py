@@ -68,29 +68,35 @@ def test_sliding_window_indexes_untrimmed_conversation_turns():
     ):
         dataset = CustomDataset(df, _cfg(), mode="train")
 
-    assert dataset.sample_index[-2:] == [(2, 0, 0), (2, 5, 5)]
+    # Limit Chained Samples=False creates one endpoint sample for every ID.
+    # Parent answers remain visible context but are masked from the endpoint loss.
+    # The prompt-only first window of ID 3 is therefore removed from the supervised
+    # sliding-window index; only the window containing ID 3's answer remains.
+    assert dataset.sample_index == [(0, None, 0), (1, None, 0), (2, 5, 0)]
 
-    first_window = dataset[len(dataset) - 2]
-    second_window = dataset[len(dataset) - 1]
+    endpoint_window = dataset[len(dataset) - 1]
+    endpoint_tokens = endpoint_window["input_ids"][
+        endpoint_window["attention_mask"].bool()
+    ]
+    assert "".join(chr(token) for token in endpoint_tokens.tolist()) == "p2 a2p3 a3"
 
-    first_tokens = first_window["input_ids"][first_window["attention_mask"].bool()]
-    second_tokens = second_window["input_ids"][second_window["attention_mask"].bool()]
-    assert "".join(chr(token) for token in first_tokens.tolist()) == "p1 a1p2 a2"
-    assert "".join(chr(token) for token in second_tokens.tolist()) == "p2 a2p3 a3"
+    trained_texts = []
+    for sample in dataset:
+        trained_texts.append(
+            "".join(chr(token) for token in sample["labels"].tolist() if token != -100)
+        )
 
-    trained_label_text = "".join(
-        chr(token)
-        for sample in (first_window, second_window)
-        for token in sample["labels"].tolist()
-        if token != -100
-    )
-    assert "a1" in trained_label_text
-    assert "a2" in trained_label_text
-    assert "a3" in trained_label_text
+    assert "a1" in trained_texts[0]
+    assert "a2" not in trained_texts[0]
+    assert "a1" not in trained_texts[1]
+    assert "a2" in trained_texts[1]
+    assert "a1" not in trained_texts[2]
+    assert "a2" not in trained_texts[2]
+    assert "a3" in trained_texts[2]
 
-    second_labels = second_window["labels"][:10]
-    assert second_labels[:5].tolist() == [-100] * 5
-    assert second_labels[5:].tolist() == [-100, -100, ord(" "), ord("a"), ord("3")]
+    endpoint_labels = endpoint_window["labels"][:10]
+    assert endpoint_labels[:7].tolist() == [-100] * 7
+    assert endpoint_labels[7:].tolist() == [ord(" "), ord("a"), ord("3")]
 
 
 def test_sliding_window_starts_mask_actual_duplicate_prefix_for_shifted_final_window():

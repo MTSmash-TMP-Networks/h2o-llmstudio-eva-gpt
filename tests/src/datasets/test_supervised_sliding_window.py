@@ -206,6 +206,9 @@ def test_cache_key_changes_with_label_masking(tmp_path, monkeypatch):
     for cfg in (first_cfg, second_cfg):
         cfg.dataset.parent_id_column = "parent_id"
         cfg.dataset.id_column = "id"
+        # Keep this test focused on cache-key sensitivity. Unlimited chains now
+        # intentionally force endpoint-only supervision regardless of this toggle.
+        cfg.dataset.limit_chained_samples = True
 
     with patch(
         "llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer",
