@@ -271,8 +271,10 @@ def _install_dataset_encoding_support() -> None:
 
 
 def _install_fast_layout_support() -> None:
-    from llm_studio.src.datasets import fast_sliding_window
-    from llm_studio.src.datasets import structure_aware_sliding_window
+    from llm_studio.src.datasets import (
+        fast_sliding_window,
+        structure_aware_sliding_window,
+    )
 
     fast_cls = fast_sliding_window.FastSlidingWindowDataset
     if not getattr(fast_cls, "_context_only_prompt_parts_installed", False):
