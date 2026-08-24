@@ -16,6 +16,21 @@ def _uses_unlimited_chained_samples(cfg: Any) -> bool:
     return not bool(getattr(cfg.dataset, "limit_chained_samples", False))
 
 
+def _validate_long_sample_strategy(cfg: Any, mode: str) -> None:
+    """Reject settings that can silently remove endpoint IDs from training."""
+    if mode != "train" or not _uses_unlimited_chained_samples(cfg):
+        return
+
+    tokenizer_cfg = getattr(cfg, "tokenizer", None)
+    strategy = getattr(tokenizer_cfg, "long_sample_strategy", "Truncate")
+    if strategy == "Skip":
+        raise ValueError(
+            "Limit Chained Samples=False requires every training ID to remain in "
+            "the dataset, but Long Sample Strategy='Skip' can silently remove "
+            "long endpoint samples. Use 'Truncate' or 'Sliding Window' instead."
+        )
+
+
 def _apply_exact_chain_settings(cfg: Any, mode: str) -> bool:
     """Configure unlimited chains so each endpoint ID is the sole supervised turn.
 
@@ -26,6 +41,8 @@ def _apply_exact_chain_settings(cfg: Any, mode: str) -> bool:
     """
     if not _uses_unlimited_chained_samples(cfg):
         return False
+
+    _validate_long_sample_strategy(cfg, mode)
 
     changed = False
     if not bool(getattr(cfg.dataset, "mask_prompt_labels", True)):
