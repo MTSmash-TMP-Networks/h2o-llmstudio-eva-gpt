@@ -83,9 +83,7 @@ def test_sliding_window_indexes_untrimmed_conversation_turns():
     trained_texts = []
     for sample in dataset:
         trained_texts.append(
-            "".join(
-                chr(token) for token in sample["labels"].tolist() if token != -100
-            )
+            "".join(chr(token) for token in sample["labels"].tolist() if token != -100)
         )
 
     assert "a1" in trained_texts[0]
