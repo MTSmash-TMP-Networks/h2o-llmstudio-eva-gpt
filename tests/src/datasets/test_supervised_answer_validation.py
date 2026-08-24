@@ -37,6 +37,22 @@ def test_allows_empty_answer_as_context_for_later_answered_turn():
     CustomDataset.sanity_check(df, _cfg(), mode="train")
 
 
+@pytest.mark.parametrize("empty_value", [None, float("nan"), "", "   ", "null"])
+def test_allows_missing_answer_cells_as_chained_context(empty_value):
+    df = pd.DataFrame(
+        {
+            "id": ["id_1", "id_2"],
+            "parent_id": [None, "id_1"],
+            "system": ["", ""],
+            "prompt": ["Nur Kontext", "Jetzt beantworten"],
+            "answer": [empty_value, "Antwort"],
+            "Text": ["", ""],
+        }
+    )
+
+    CustomDataset.sanity_check(df, _cfg(), mode="train")
+
+
 def test_allows_multiple_context_only_turns_before_assistant_answer():
     df = pd.DataFrame(
         {
