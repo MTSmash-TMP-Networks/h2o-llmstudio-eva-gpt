@@ -1,4 +1,4 @@
-"""Runtime semantics for exact per-ID training of unlimited conversation chains."""
+"""Runtime semantics for per-ID training of unlimited conversation chains."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def _apply_exact_chain_settings(cfg: Any, mode: str) -> bool:
 
     if changed:
         logger.info(
-            "Limit Chained Samples=False: using exact per-ID supervision "
+            "Limit Chained Samples=False: using per-ID endpoint supervision "
             "(parent turns are context only, only the endpoint answer contributes "
             "loss, incomplete train batches are retained)."
         )
@@ -110,7 +110,7 @@ def _pad_distributed_sample_index(dataset: Any, cfg: Any, mode: str) -> int:
 
 
 def install_exact_chained_training() -> None:
-    """Install exact unlimited-chain behavior on the exported causal-LM dataset."""
+    """Install per-ID unlimited-chain behavior on the exported causal-LM dataset."""
     from llm_studio.src.datasets import text_causal_language_modeling_ds
 
     dataset_cls = text_causal_language_modeling_ds.CustomDataset
