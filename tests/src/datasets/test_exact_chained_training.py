@@ -34,7 +34,7 @@ def _cfg(
     )
 
 
-def test_unlimited_chains_enable_exact_per_id_supervision():
+def test_unlimited_chains_enable_per_id_endpoint_supervision():
     cfg = _cfg()
 
     assert _uses_unlimited_chained_samples(cfg)
@@ -77,7 +77,7 @@ def test_no_parent_column_keeps_single_turn_training_settings():
     assert cfg.training.drop_last_batch is True
 
 
-def test_validation_uses_same_exact_target_semantics_without_touching_batch_setting():
+def test_validation_uses_same_endpoint_semantics_without_touching_batch_setting():
     cfg = _cfg()
 
     assert _apply_exact_chain_settings(cfg, mode="validation")
