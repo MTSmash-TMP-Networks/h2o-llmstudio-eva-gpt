@@ -28,6 +28,15 @@ def _format_row_reference(df: pd.DataFrame, cfg: Any, index: Any) -> str:
     return " ".join(parts)
 
 
+def _answer_columns(cfg: Any) -> list[str]:
+    answer_column = getattr(cfg.dataset, "answer_column", None)
+    if isinstance(answer_column, str):
+        return [answer_column]
+    if isinstance(answer_column, (list, tuple)):
+        return [column for column in answer_column if isinstance(column, str)]
+    return []
+
+
 def _validate_supervised_answers(df: pd.DataFrame, cfg: Any, mode: str) -> None:
     """Reject empty assistant answers unless they are chained context-only turns.
 
@@ -38,8 +47,7 @@ def _validate_supervised_answers(df: pd.DataFrame, cfg: Any, mode: str) -> None:
 
     Raw ``Text`` rows used for continued pretraining remain explicitly exempt.
     """
-    answer_column = getattr(cfg.dataset, "answer_column", None)
-    if not isinstance(answer_column, (str, list, tuple)):
+    if not _answer_columns(cfg):
         return
 
     answer_mask = get_supervised_answer_mask(df, cfg)
@@ -75,6 +83,18 @@ def _validate_supervised_answers(df: pd.DataFrame, cfg: Any, mode: str) -> None:
     )
 
 
+def _fill_missing_answer_cells(df: pd.DataFrame, cfg: Any) -> pd.DataFrame:
+    """Let the legacy sanity check see valid context-only NaN cells as empty text."""
+    answer_columns = [column for column in _answer_columns(cfg) if column in df.columns]
+    if not answer_columns or not any(df[column].isna().any() for column in answer_columns):
+        return df
+
+    sanity_df = df.copy()
+    for column in answer_columns:
+        sanity_df[column] = sanity_df[column].fillna("")
+    return sanity_df
+
+
 def install_supervised_answer_validation() -> None:
     """Install the validation guard on the causal-LM dataset class once."""
     from llm_studio.src.datasets import text_causal_language_modeling_ds
@@ -87,7 +107,7 @@ def install_supervised_answer_validation() -> None:
 
     def sanity_check(cls, df: pd.DataFrame, cfg: Any, mode: str = "train"):
         _validate_supervised_answers(df, cfg, mode)
-        return original(cls, df, cfg, mode)
+        return original(cls, _fill_missing_answer_cells(df, cfg), cfg, mode)
 
     dataset_cls.sanity_check = classmethod(sanity_check)
     dataset_cls._supervised_answer_validation_installed = True
