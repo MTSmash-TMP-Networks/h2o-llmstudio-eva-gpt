@@ -19,10 +19,7 @@ def _format_row_reference(df: pd.DataFrame, cfg: Any, index: Any) -> str:
         parts.append(f"id={df.at[index, id_column]!r}")
 
     parent_id_column = getattr(cfg.dataset, "parent_id_column", None)
-    if (
-        parent_id_column not in (None, "None")
-        and parent_id_column in df.columns
-    ):
+    if parent_id_column not in (None, "None") and parent_id_column in df.columns:
         parts.append(f"parent_id={df.at[index, parent_id_column]!r}")
 
     return " ".join(parts)
@@ -48,9 +45,7 @@ def _validate_supervised_answers(df: pd.DataFrame, cfg: Any, mode: str) -> None:
         return
 
     invalid_indices = df.index[invalid_mask].tolist()
-    examples = [
-        _format_row_reference(df, cfg, index) for index in invalid_indices[:10]
-    ]
+    examples = [_format_row_reference(df, cfg, index) for index in invalid_indices[:10]]
     omitted = len(invalid_indices) - len(examples)
 
     details = "\n".join(f"  - {example}" for example in examples)
