@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 
+import pytest
+
 from llm_studio.src.datasets.exact_chained_training import (
     _apply_exact_chain_settings,
     _pad_distributed_sample_index,
     _uses_unlimited_chained_samples,
+    _validate_long_sample_strategy,
 )
 
 
@@ -13,6 +16,7 @@ def _cfg(
     parent_id_column="parent_id",
     distributed=False,
     world_size=1,
+    long_sample_strategy="Truncate",
 ):
     return SimpleNamespace(
         dataset=SimpleNamespace(
@@ -21,6 +25,7 @@ def _cfg(
             mask_prompt_labels=False,
             only_last_answer=False,
         ),
+        tokenizer=SimpleNamespace(long_sample_strategy=long_sample_strategy),
         training=SimpleNamespace(drop_last_batch=True),
         environment=SimpleNamespace(
             _distributed=distributed,
@@ -40,8 +45,18 @@ def test_unlimited_chains_enable_exact_per_id_supervision():
     assert cfg.training.drop_last_batch is False
 
 
+def test_unlimited_chains_reject_skip_strategy_that_can_remove_ids():
+    cfg = _cfg(long_sample_strategy="Skip")
+
+    with pytest.raises(ValueError, match="can silently remove"):
+        _validate_long_sample_strategy(cfg, mode="train")
+
+    with pytest.raises(ValueError, match="Long Sample Strategy='Skip'"):
+        _apply_exact_chain_settings(cfg, mode="train")
+
+
 def test_limited_chains_keep_explicit_training_settings():
-    cfg = _cfg(limit_chained_samples=True)
+    cfg = _cfg(limit_chained_samples=True, long_sample_strategy="Skip")
 
     assert not _uses_unlimited_chained_samples(cfg)
     assert not _apply_exact_chain_settings(cfg, mode="train")
