@@ -72,7 +72,7 @@ def _pad_distributed_sample_index(dataset: Any, cfg: Any, mode: str) -> int:
     The repository currently creates ``DistributedSampler(..., drop_last=True)``.
     Making the dataset length divisible by world size prevents that sampler from
     discarding tail samples. At most ``world_size - 1`` duplicate index entries are
-    added, while every original sample remains present.
+    added to keep all ranks equally sized; every original endpoint remains present.
     """
     if mode != "train" or not _uses_unlimited_chained_samples(cfg):
         return 0
