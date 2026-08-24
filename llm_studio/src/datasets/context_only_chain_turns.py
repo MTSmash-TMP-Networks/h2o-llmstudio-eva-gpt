@@ -91,16 +91,12 @@ def get_valid_context_only_mask(df: pd.DataFrame, cfg: Any) -> pd.Series:
     ]
     parent_map = {
         sample_id: parent_id
-        for sample_id, parent_id in zip(
-            sample_ids, normalized_parents, strict=False
-        )
+        for sample_id, parent_id in zip(sample_ids, normalized_parents, strict=False)
         if parent_id is not None
     }
 
     valid_context_ids: set[Any] = set()
-    for sample_id, has_answer in zip(
-        sample_ids, answer_mask.tolist(), strict=False
-    ):
+    for sample_id, has_answer in zip(sample_ids, answer_mask.tolist(), strict=False):
         if not has_answer:
             continue
         current_id = sample_id
@@ -115,9 +111,7 @@ def get_valid_context_only_mask(df: pd.DataFrame, cfg: Any) -> pd.Series:
 
     result_values = [
         (not has_answer) and sample_id in valid_context_ids
-        for sample_id, has_answer in zip(
-            sample_ids, answer_mask.tolist(), strict=False
-        )
+        for sample_id, has_answer in zip(sample_ids, answer_mask.tolist(), strict=False)
     ]
     return pd.Series(result_values, index=df.index)
 
@@ -135,7 +129,9 @@ def _strip_context_only_prompt(prompt: str) -> tuple[str, bool]:
 
 
 def _install_chain_endpoint_filter() -> None:
-    if getattr(ConversationChainHandler, "_context_only_endpoint_filter_installed", False):
+    if getattr(
+        ConversationChainHandler, "_context_only_endpoint_filter_installed", False
+    ):
         return
 
     original = ConversationChainHandler.get_conversation_chain_ids
@@ -154,9 +150,7 @@ def _install_chain_endpoint_filter() -> None:
             df, cfg
         )
         filtered = [
-            chain
-            for chain in chains
-            if chain and bool(endpoint_mask.iloc[chain[-1]])
+            chain for chain in chains if chain and bool(endpoint_mask.iloc[chain[-1]])
         ]
         removed = len(chains) - len(filtered)
         if removed:
@@ -252,10 +246,9 @@ def _install_dataset_encoding_support() -> None:
 
     def postprocess_output(self, cfg, df: pd.DataFrame, output: dict):
         handler = self.conversation_chain_handler
-        use_context_endpoint_targets = (
-            not bool(getattr(cfg.dataset, "limit_chained_samples", False))
-            and len(handler) != len(handler.answers)
-        )
+        use_context_endpoint_targets = not bool(
+            getattr(cfg.dataset, "limit_chained_samples", False)
+        ) and len(handler) != len(handler.answers)
         if not use_context_endpoint_targets:
             return original_postprocess_output(self, cfg, df, output)
 
