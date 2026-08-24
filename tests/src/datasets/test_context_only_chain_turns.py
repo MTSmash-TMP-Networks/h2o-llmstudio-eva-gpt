@@ -58,9 +58,7 @@ def _decode(tokens):
 
 
 def _trainable_text(sample):
-    return "".join(
-        chr(token) for token in sample["labels"].tolist() if token != -100
-    )
+    return "".join(chr(token) for token in sample["labels"].tolist() if token != -100)
 
 
 def _label_spans(labels):
