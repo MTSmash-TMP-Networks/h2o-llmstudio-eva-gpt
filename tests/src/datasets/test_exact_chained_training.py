@@ -87,7 +87,7 @@ def test_validation_uses_same_exact_target_semantics_without_touching_batch_sett
     assert cfg.training.drop_last_batch is True
 
 
-def test_distributed_index_padding_keeps_every_original_sample():
+def test_ddp_padding_preserves_every_original_endpoint():
     cfg = _cfg(distributed=True, world_size=4)
     dataset = SimpleNamespace(
         sample_index=[
