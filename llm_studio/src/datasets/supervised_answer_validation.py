@@ -80,7 +80,10 @@ def install_supervised_answer_validation() -> None:
     if getattr(dataset_cls, "_supervised_answer_validation_installed", False):
         return
 
-    original = dataset_cls.__dict__["sanity_check"].__func__
+    # The exported dataset may be a Fast/Structure-Aware subclass. ``sanity_check``
+    # is a classmethod inherited from the base causal-LM dataset, so reading only
+    # ``dataset_cls.__dict__`` can fail even though the method is available.
+    original = dataset_cls.sanity_check.__func__
 
     def sanity_check(cls, df: pd.DataFrame, cfg: Any, mode: str = "train"):
         _validate_supervised_answers(df, cfg, mode)
