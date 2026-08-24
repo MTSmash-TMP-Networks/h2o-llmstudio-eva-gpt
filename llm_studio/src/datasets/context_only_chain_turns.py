@@ -15,15 +15,7 @@ from llm_studio.src.datasets.text_utils import clean_missing_text_values
 logger = logging.getLogger(__name__)
 
 _CONTEXT_ONLY_PROMPT_PREFIX = "\x00__LLM_STUDIO_CONTEXT_ONLY_USER_TURN__\x00"
-_MISSING_TEXT_MARKERS = {"", "none", "null", "nan", "na"}
 _CACHE_SEMANTICS_VERSION = "context-only-user-turn-v1"
-
-
-def _text_has_content(value: Any) -> bool:
-    if value is None:
-        return False
-    text = str(value).strip()
-    return text.lower() not in _MISSING_TEXT_MARKERS
 
 
 def get_supervised_answer_mask(df: pd.DataFrame, cfg: Any) -> pd.Series:
@@ -208,35 +200,30 @@ def _install_dataset_encoding_support() -> None:
     if getattr(dataset_cls, "_context_only_encoding_installed", False):
         return
 
-    original_parse_answer = dataset_cls.parse_answer
     original_prepare = dataset_cls._prepare_input_text_dict
-    original_get_sample_encoding = dataset_cls._get_sample_encoding
     original_get_prompt_encoding_and_mask = dataset_cls._get_prompt_encoding_and_mask
     original_postprocess_output = dataset_cls.postprocess_output
 
-    def parse_answer(cfg: Any, answer: str):
-        if not _text_has_content(answer):
-            return ""
-        return original_parse_answer(cfg, answer)
-
     def _prepare_input_text_dict(self, idx: int):
         input_text_dict = original_prepare(self, idx)
-        input_text_dict["prompts"] = [
-            _mark_context_only_prompt(prompt)
-            if not _text_has_content(answer)
-            else prompt
-            for prompt, answer in zip(
-                input_text_dict["prompts"],
-                input_text_dict["answers"],
-                strict=False,
-            )
-        ]
-        return input_text_dict
 
-    def _get_sample_encoding(self, system: str, prompt: str, answer: str):
-        if not _text_has_content(answer):
-            prompt = _mark_context_only_prompt(prompt)
-        return original_get_sample_encoding(self, system, prompt, answer)
+        context_only_mask = getattr(self, "_context_only_row_mask", None)
+        if context_only_mask is None:
+            context_only_mask = get_valid_context_only_mask(self.df, self.cfg).tolist()
+            self._context_only_row_mask = context_only_mask
+
+        chain_row_ids = self.conversation_chain_handler.conversation_chain_ids[idx]
+        for turn_idx, row_idx in enumerate(chain_row_ids):
+            if not context_only_mask[row_idx]:
+                continue
+            input_text_dict["prompts"][turn_idx] = _mark_context_only_prompt(
+                input_text_dict["prompts"][turn_idx]
+            )
+            # The legacy parser may append answer EOS even to an empty raw cell.
+            # Context-only turns have no assistant message at all, so clear it.
+            input_text_dict["answers"][turn_idx] = ""
+
+        return input_text_dict
 
     def _get_prompt_encoding_and_mask(self, prompt: str):
         _, is_context_only = _strip_context_only_prompt(prompt)
@@ -262,9 +249,7 @@ def _install_dataset_encoding_support() -> None:
         finally:
             handler.answers = full_answers
 
-    dataset_cls.parse_answer = staticmethod(parse_answer)
     dataset_cls._prepare_input_text_dict = _prepare_input_text_dict
-    dataset_cls._get_sample_encoding = _get_sample_encoding
     dataset_cls._get_prompt_encoding_and_mask = _get_prompt_encoding_and_mask
     dataset_cls.postprocess_output = postprocess_output
     dataset_cls._context_only_encoding_installed = True
