@@ -66,6 +66,7 @@ jobs:
             tests/src/datasets/test_supervised_sliding_window.py \
             tests/src/datasets/test_supervised_answer_validation.py \
             tests/src/datasets/test_exact_chained_training.py \
+            tests/src/datasets/test_context_only_chain_turns.py \
             tests/src/datasets/test_plain_text_rows.py::test_plain_text_rows_are_trained_raw_and_unmasked \
             tests/src/datasets/test_plain_text_rows.py::test_plain_text_rows_are_ignored_when_toggle_is_disabled \
             tests/src/datasets/test_text_causal_language_modeling_ds.py::test_skip_long_samples_in_training \
