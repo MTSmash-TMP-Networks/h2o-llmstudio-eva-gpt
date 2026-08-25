@@ -123,9 +123,7 @@ def normalize_training_precision(cfg: Any) -> None:
 def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
     """Build a DeepSpeed config whose compute dtype follows mixed precision."""
     mixed_precision = bool(getattr(cfg.environment, "mixed_precision", False))
-    mixed_precision_dtype = getattr(
-        cfg.environment, "mixed_precision_dtype", "float16"
-    )
+    mixed_precision_dtype = getattr(cfg.environment, "mixed_precision_dtype", "float16")
 
     if mixed_precision:
         fp16_enabled = mixed_precision_dtype == "float16"
