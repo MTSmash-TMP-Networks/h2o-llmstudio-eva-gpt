@@ -9,6 +9,8 @@ import torch
 
 logger = logging.getLogger(__name__)
 
+_deepspeed_owns_mixed_precision = False
+
 
 def _selected_cuda_indices(cfg: Any) -> list[int]:
     """Return valid logical CUDA indices selected by the experiment."""
@@ -66,19 +68,68 @@ def _selected_cuda_names(cfg: Any) -> str:
     return ", ".join(names) if names else "selected CUDA GPU(s)"
 
 
+def deepspeed_owns_mixed_precision() -> bool:
+    """Return whether DeepSpeed, rather than torch autocast, owns precision."""
+    return _deepspeed_owns_mixed_precision
+
+
+def _set_deepspeed_precision_owner(cfg: Any) -> None:
+    global _deepspeed_owns_mixed_precision
+
+    environment = getattr(cfg, "environment", None)
+    _deepspeed_owns_mixed_precision = bool(
+        environment is not None
+        and getattr(environment, "use_deepspeed", False)
+        and getattr(environment, "mixed_precision", False)
+    )
+
+
+def _install_external_autocast_guard() -> None:
+    """Disable H2O's outer CUDA autocast while DeepSpeed owns mixed precision.
+
+    DeepSpeed's native FP16 mode already converts the model, keeps FP32 master
+    optimizer state, performs dynamic loss scaling, and drives backward/step.
+    Wrapping that engine in a second torch.cuda.amp.autocast context gives two
+    independent mixed-precision controllers around the same forward pass.
+    """
+    from torch.cuda.amp import autocast as cuda_autocast
+
+    if getattr(cuda_autocast, "_llmstudio_deepspeed_guard", False):
+        return
+
+    original_init = cuda_autocast.__init__
+
+    def guarded_init(self, *args, **kwargs):
+        if _deepspeed_owns_mixed_precision:
+            if "enabled" in kwargs:
+                kwargs["enabled"] = False
+            elif args:
+                args = (False, *args[1:])
+            else:
+                kwargs["enabled"] = False
+        return original_init(self, *args, **kwargs)
+
+    cuda_autocast.__init__ = guarded_init
+    cuda_autocast._llmstudio_deepspeed_guard = True
+
+
 def normalize_training_precision(cfg: Any) -> None:
     """Normalize unsafe full-FP16 configurations to stable FP16 AMP training.
 
-    Full-weight training keeps trainable parameters in FP32 and uses FP16 only
-    for autocast compute. This lets the existing GradScaler path protect small
-    gradients on V100-class hardware while retaining Tensor Core acceleration.
+    Normal DDP keeps trainable parameters in FP32 and uses FP16 autocast plus a
+    GradScaler. DeepSpeed uses its native FP16 engine instead: FP16 model compute,
+    FP32 master optimizer state and DeepSpeed dynamic loss scaling.
     """
+    global _deepspeed_owns_mixed_precision
+
     architecture = getattr(cfg, "architecture", None)
     environment = getattr(cfg, "environment", None)
     training = getattr(cfg, "training", None)
     if architecture is None or environment is None or training is None:
+        _deepspeed_owns_mixed_precision = False
         return
     if int(getattr(training, "epochs", 0)) <= 0:
+        _deepspeed_owns_mixed_precision = False
         return
 
     lora = bool(getattr(training, "lora", False))
@@ -90,8 +141,8 @@ def normalize_training_precision(cfg: Any) -> None:
         environment.mixed_precision_dtype = "float16"
         logger.info(
             "Safe FP16 full-weight training enabled: trainable backbone weights "
-            "were promoted from float16 to float32 while compute remains FP16 "
-            "through mixed precision with dynamic gradient scaling."
+            "were promoted from float16 to float32 before distributed wrapping; "
+            "compute remains FP16 through mixed precision."
         )
         backbone_dtype = "float32"
 
@@ -119,6 +170,13 @@ def normalize_training_precision(cfg: Any) -> None:
                 architecture.backbone_dtype,
             )
 
+    _set_deepspeed_precision_owner(cfg)
+    if _deepspeed_owns_mixed_precision:
+        logger.info(
+            "DeepSpeed owns mixed precision for this run; external torch CUDA "
+            "autocast is disabled to avoid nested AMP/loss-scaling control."
+        )
+
 
 def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
     """Build a DeepSpeed config whose compute dtype follows mixed precision."""
@@ -137,7 +195,11 @@ def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
     ds_config: dict[str, Any] = {
         "fp16": {
             "enabled": fp16_enabled,
+            "loss_scale": 0,
             "loss_scale_window": 100,
+            "initial_scale_power": 16,
+            "hysteresis": 2,
+            "min_loss_scale": 1,
         },
         "bf16": {
             "enabled": bf16_enabled,
@@ -186,8 +248,10 @@ def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
 
 
 def install_precision_runtime_patch() -> None:
-    """Install the DeepSpeed precision fix before train.py imports the function."""
+    """Install precision fixes before train.py imports the runtime functions."""
     from llm_studio.src.utils import modeling_utils
+
+    _install_external_autocast_guard()
 
     if getattr(modeling_utils, "_v100_precision_patch_installed", False):
         return

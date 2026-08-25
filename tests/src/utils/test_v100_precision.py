@@ -4,6 +4,7 @@ import torch
 
 from llm_studio.src.utils.v100_precision import (
     build_deepspeed_config,
+    deepspeed_owns_mixed_precision,
     install_precision_runtime_patch,
     normalize_training_precision,
 )
@@ -15,6 +16,7 @@ def _cfg(
     mixed_precision=True,
     mixed_precision_dtype="float16",
     lora=False,
+    use_deepspeed=False,
 ):
     return SimpleNamespace(
         architecture=SimpleNamespace(
@@ -25,6 +27,7 @@ def _cfg(
             gpus=("0", "1", "2", "3"),
             mixed_precision=mixed_precision,
             mixed_precision_dtype=mixed_precision_dtype,
+            use_deepspeed=use_deepspeed,
             deepspeed_method="ZeRO2",
             deepspeed_reduce_bucket_size=1_000_000,
             deepspeed_allgather_bucket_size=1_000_000,
@@ -70,6 +73,7 @@ def test_full_float16_training_is_promoted_to_fp32_weights_with_fp16_amp():
     assert cfg.architecture.backbone_dtype == "float32"
     assert cfg.environment.mixed_precision is True
     assert cfg.environment.mixed_precision_dtype == "float16"
+    assert deepspeed_owns_mixed_precision() is False
 
 
 def test_v100_falls_back_from_bfloat16_amp_to_float16(monkeypatch):
@@ -136,11 +140,16 @@ def test_deepspeed_uses_fp16_amp_with_float32_backbone():
         backbone_dtype="float32",
         mixed_precision=True,
         mixed_precision_dtype="float16",
+        use_deepspeed=True,
     )
 
+    normalize_training_precision(cfg)
     ds_config = build_deepspeed_config(cfg)
 
+    assert deepspeed_owns_mixed_precision() is True
     assert ds_config["fp16"]["enabled"] is True
+    assert ds_config["fp16"]["loss_scale"] == 0
+    assert ds_config["fp16"]["min_loss_scale"] == 1
     assert ds_config["bf16"]["enabled"] is False
     assert ds_config["gradient_accumulation_steps"] == 4
     assert ds_config["zero_optimization"]["stage"] == 2
@@ -151,12 +160,50 @@ def test_deepspeed_uses_bfloat16_when_amp_requests_it():
         backbone_dtype="float32",
         mixed_precision=True,
         mixed_precision_dtype="bfloat16",
+        use_deepspeed=True,
     )
 
+    normalize_training_precision(cfg)
     ds_config = build_deepspeed_config(cfg)
 
+    assert deepspeed_owns_mixed_precision() is True
     assert ds_config["fp16"]["enabled"] is False
     assert ds_config["bf16"]["enabled"] is True
+
+
+def test_deepspeed_disables_outer_cuda_autocast():
+    from torch.cuda.amp import autocast
+
+    install_precision_runtime_patch()
+    cfg = _cfg(
+        backbone_dtype="float32",
+        mixed_precision=True,
+        mixed_precision_dtype="float16",
+        use_deepspeed=True,
+    )
+    normalize_training_precision(cfg)
+
+    context = autocast(enabled=True)
+
+    assert context._enabled is False
+
+
+def test_ddp_keeps_outer_cuda_autocast_available():
+    from torch.cuda.amp import autocast
+
+    install_precision_runtime_patch()
+    cfg = _cfg(
+        backbone_dtype="float32",
+        mixed_precision=True,
+        mixed_precision_dtype="float16",
+        use_deepspeed=False,
+    )
+    normalize_training_precision(cfg)
+
+    context = autocast(enabled=False)
+
+    assert deepspeed_owns_mixed_precision() is False
+    assert context._enabled is False
 
 
 def test_runtime_patch_replaces_legacy_deepspeed_dtype_selection():
