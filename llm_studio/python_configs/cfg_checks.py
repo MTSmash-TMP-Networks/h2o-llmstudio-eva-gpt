@@ -6,8 +6,17 @@ import torch
 from llm_studio.app_utils.config import default_cfg
 from llm_studio.python_configs.base import DefaultConfigProblemBase
 from llm_studio.src.utils.export_utils import get_size_str
+from llm_studio.src.utils.v100_precision import (
+    install_precision_runtime_patch,
+    normalize_training_precision,
+)
 
 logger = logging.getLogger(__name__)
+
+# train.py imports cfg_checks before importing get_ds_config from modeling_utils.
+# Installing here guarantees that DeepSpeed sees the same effective mixed-precision
+# dtype as the normal DDP training path.
+install_precision_runtime_patch()
 
 
 def check_config_for_errors(cfg: DefaultConfigProblemBase) -> dict:
@@ -35,6 +44,8 @@ def check_config_for_errors(cfg: DefaultConfigProblemBase) -> dict:
 
 
 def check_for_common_errors(cfg: DefaultConfigProblemBase) -> dict:
+    normalize_training_precision(cfg)
+
     errors: dict[str, list] = {"title": [], "message": [], "type": []}
     if not len(cfg.environment.gpus) > 0:
         errors["title"] += ["No GPU selected"]
@@ -91,14 +102,14 @@ def check_for_common_errors(cfg: DefaultConfigProblemBase) -> dict:
 
     if (
         not cfg.training.lora
-        and cfg.architecture.backbone_dtype not in ["bfloat16", "float32"]
+        and cfg.architecture.backbone_dtype == "float16"
         and cfg.training.epochs > 0
     ):
-        errors["title"] += [f"Pure {cfg.architecture.backbone_dtype} training."]
+        errors["title"] += ["Unsafe pure float16 full-weight training."]
         errors["message"] += [
-            f"When not using LORA, {cfg.architecture.backbone_dtype} training will "
-            "likely lead to unstable training. "
-            "Please use LORA or set Backbone Dtype to bfloat16 or float32."
+            "Full-weight float16 parameters can make training unstable. Use "
+            "Backbone Dtype=float32 together with Mixed Precision=float16 so "
+            "trainable weights stay in FP32 while forward/backward compute uses FP16."
         ]
         errors["type"].append("warning")
 
@@ -108,9 +119,8 @@ def check_for_common_errors(cfg: DefaultConfigProblemBase) -> dict:
     ]:
         errors["title"] += ["Deepspeed does not support quantization."]
         errors["message"] += [
-            "Deepspeed do not support backbone type "
-            f"{cfg.architecture.backbone_dtype}. "
-            "Please set backbone type to float16 or bfloat16 for using deepspeed."
+            "Deepspeed does not support quantized backbone training. Use a float32 "
+            "backbone with Mixed Precision set to float16 or bfloat16."
         ]
         errors["type"].append("error")
     if cfg.environment.use_deepspeed and len(cfg.environment.gpus) < 2:
