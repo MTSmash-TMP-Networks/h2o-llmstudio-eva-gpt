@@ -174,6 +174,17 @@ chat_template_for_system
     return chat_template
 
 
+def _hf_repo_private() -> bool:
+    """Return whether Hugging Face exports should use private repositories.
+
+    Private repositories remain the default for backwards compatibility and to avoid
+    accidentally publishing models. Set HF_HUB_REPO_PRIVATE=0/false/no/off to export
+    to a public repository instead.
+    """
+    value = os.getenv("HF_HUB_REPO_PRIVATE", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def publish_model_to_hugging_face(
     path_to_experiment: str,
     model_name: str,
@@ -235,14 +246,15 @@ def publish_model_to_hugging_face(
         user_id = huggingface_hub.whoami()["name"]
 
     repo_id = f"{user_id}/{hf_repo_friendly_name(model_name)}"
+    private = _hf_repo_private()
 
     api = huggingface_hub.HfApi(token=api_key if api_key else None)
-    api.create_repo(repo_id=repo_id, repo_type="model", private=True, exist_ok=True)
+    api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
 
     # push tokenizer to hub
     if cfg.problem_type in GENERATION_PROBLEM_TYPES:
         tokenizer.chat_template = get_chat_template(cfg)
-    tokenizer.push_to_hub(repo_id=repo_id, private=True, token=api_key)
+    tokenizer.push_to_hub(repo_id=repo_id, private=private, token=api_key)
 
     # push model card to hub
     card = get_model_card(cfg, model, repo_id)
@@ -287,7 +299,7 @@ def publish_model_to_hugging_face(
     # push model to hub
     push_kwargs = dict(
         repo_id=repo_id,
-        private=True,
+        private=private,
         commit_message="Upload model",
         token=api_key,
     )
@@ -298,7 +310,19 @@ def publish_model_to_hugging_face(
         and transformers_major_version < 5
     ):
         push_kwargs["safe_serialization"] = safe_serialization
-    model.backbone.push_to_hub(**push_kwargs)
+
+    try:
+        model.backbone.push_to_hub(**push_kwargs)
+    except huggingface_hub.errors.BadRequestError as exc:
+        message = str(exc)
+        if "Private repository storage limit reached" in message:
+            raise RuntimeError(
+                "Hugging Face private repository storage limit reached. "
+                "Free private storage, upgrade the Hugging Face plan, or explicitly "
+                "set HF_HUB_REPO_PRIVATE=0 to export this model to a public repository. "
+                "Public export is never enabled automatically."
+            ) from exc
+        raise
 
     # Storing HF attributes
     output_directory = cfg.output_directory
