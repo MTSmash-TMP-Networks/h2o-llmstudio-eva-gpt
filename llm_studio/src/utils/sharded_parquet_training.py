@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable
 
 import pandas as pd
@@ -209,6 +210,32 @@ def _balance_dataframe_rows(df: pd.DataFrame, cfg: Any, label: str) -> pd.DataFr
     return df.reset_index(drop=True)
 
 
+def _same_dataset_path(left: Any, right: Any) -> bool:
+    try:
+        return os.path.abspath(os.fspath(left)) == os.path.abspath(os.fspath(right))
+    except TypeError:
+        return False
+
+
+def _clean_text_rows(
+    df: pd.DataFrame, text_column: str, *, rank: int, label: str
+) -> pd.DataFrame:
+    """Normalize raw text once and remove rows that cannot contribute training loss."""
+    df = df.copy()
+    df[text_column] = df[text_column].fillna("").astype(str)
+    non_empty = df[text_column].str.strip().ne("")
+    dropped = int((~non_empty).sum())
+    if dropped:
+        logger.info(
+            "Rank %s removed %s empty rows from its %s text partition.",
+            rank,
+            dropped,
+            label,
+        )
+        df = df.loc[non_empty].copy()
+    return df.reset_index(drop=True)
+
+
 def _prepare_rank_partitioned_data(cfg: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Prepare one rank's unique shard partition without loading the full corpus."""
     if _ORIGINAL_READ_DATAFRAME is None:
@@ -227,7 +254,9 @@ def _prepare_rank_partitioned_data(cfg: Any) -> tuple[pd.DataFrame, pd.DataFrame
             "Text-only sharded training could not resolve the configured text column. "
             f"Configured={text_column!r}, available={list(local_df.columns)!r}."
         )
-    local_df[text_column] = local_df[text_column].fillna("").astype(str)
+    local_df = _clean_text_rows(
+        local_df, text_column, rank=rank, label="training source"
+    )
 
     validation_strategy = getattr(cfg.dataset, "validation_strategy", "automatic")
     if validation_strategy == "automatic":
@@ -248,13 +277,31 @@ def _prepare_rank_partitioned_data(cfg: Any) -> tuple[pd.DataFrame, pd.DataFrame
 
         from llm_studio.app_utils.huggingface_parquet import is_parquet_directory
 
-        train_df = local_df
-        if is_parquet_directory(validation_path):
-            val_df = _read_rank_partitioned_dataframe(validation_path, rank, world_size)
+        if is_parquet_directory(validation_path) and _same_dataset_path(
+            validation_path, train_path
+        ):
+            logger.warning(
+                "Custom validation points to the same sharded Parquet dataset as "
+                "training. Using a deterministic local split instead of loading the "
+                "same shards twice and validating on the training rows."
+            )
+            train_df, val_df = train_test_split(
+                local_df,
+                test_size=cfg.dataset.validation_size,
+                random_state=1337,
+            )
         else:
-            val_df = _ORIGINAL_READ_DATAFRAME(validation_path)
-        if text_column in val_df.columns:
-            val_df[text_column] = val_df[text_column].fillna("").astype(str)
+            train_df = local_df
+            if is_parquet_directory(validation_path):
+                val_df = _read_rank_partitioned_dataframe(
+                    validation_path, rank, world_size
+                )
+            else:
+                val_df = _ORIGINAL_READ_DATAFRAME(validation_path)
+            if text_column in val_df.columns:
+                val_df = _clean_text_rows(
+                    val_df, text_column, rank=rank, label="validation"
+                )
     else:
         raise ValueError(
             f"Unsupported validation strategy for sharded text training: "
