@@ -344,7 +344,9 @@ def test_sharded_statistics_use_bounded_sample(monkeypatch):
 
     cfg = SimpleNamespace()
     monkeypatch.setattr(dataset_section, "read_dataframe", fake_read_dataframe)
-    monkeypatch.setattr(large_stats, "parquet_directory_row_count", lambda path: 2_845_308)
+    monkeypatch.setattr(
+        large_stats, "parquet_directory_row_count", lambda path: 2_845_308
+    )
     monkeypatch.setattr(large_stats, "load_config_yaml", lambda path: cfg)
     monkeypatch.setattr(
         large_stats,
