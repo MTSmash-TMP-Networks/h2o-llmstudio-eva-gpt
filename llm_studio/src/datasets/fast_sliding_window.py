@@ -5,8 +5,9 @@ from __future__ import annotations
 import codecs
 import logging
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import torch
@@ -233,7 +234,9 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
         try:
             encoded = self.tokenizer(text, return_tensors="pt", **kwargs)
         except TypeError:
-            encoded = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
+            encoded = self.tokenizer(
+                text, return_tensors="pt", add_special_tokens=False
+            )
         input_ids = encoded["input_ids"]
         if isinstance(input_ids, torch.Tensor):
             if input_ids.ndim == 2:
@@ -423,9 +426,7 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
 
                     prompt_parts = self._prompt_parts_with_masks(prompt)
                     prompt_part_lengths = [
-                        token_lengths.get(
-                            (local_idx, turn_idx, "prompt", part_idx), 0
-                        )
+                        token_lengths.get((local_idx, turn_idx, "prompt", part_idx), 0)
                         for part_idx in range(len(prompt_parts))
                     ]
                     left_trim = max(sum(prompt_part_lengths) - max_length, 0)
@@ -504,9 +505,7 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
             parts.append((self.cfg.tokenizer._tokenizer_eos_token, False))
         parts.append(
             (
-                codecs.decode(
-                    self.cfg.dataset.text_answer_separator, "unicode_escape"
-                ),
+                codecs.decode(self.cfg.dataset.text_answer_separator, "unicode_escape"),
                 False,
             )
         )
