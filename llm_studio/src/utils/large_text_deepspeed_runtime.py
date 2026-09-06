@@ -36,7 +36,9 @@ def _rank(cfg: Any) -> int:
     return int(getattr(getattr(cfg, "environment", None), "_local_rank", 0) or 0)
 
 
-def _force_zero_workers(original: Callable[..., Any], dataset: Any, cfg: Any, *, kind: str):
+def _force_zero_workers(
+    original: Callable[..., Any], dataset: Any, cfg: Any, *, kind: str
+):
     """Build a DataLoader without forked workers for multi-GB in-memory text data."""
     if not _is_rank_partitioned_dataset(dataset):
         if kind == "train":
@@ -259,7 +261,9 @@ def _load_checkpoint_low_memory(
 
     resolved_path = weights_path
     if resolved_path is None:
-        resolved_path = getattr(getattr(cfg, "architecture", None), "pretrained_weights", None)
+        resolved_path = getattr(
+            getattr(cfg, "architecture", None), "pretrained_weights", None
+        )
     normalized_path = _normalize_path(resolved_path)
     if not _is_large_distributed_checkpoint(cfg, normalized_path):
         return _ORIGINAL_LOAD_CHECKPOINT(
