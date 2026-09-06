@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import logging
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,8 @@ from llm_studio.src.datasets.sliding_window_cache import (
 logger = logging.getLogger(__name__)
 _SAMPLE_BATCH_SIZE = 256
 _TOKENIZER_BATCH_SIZE = 512
+_FULL_LENGTH_TOKENIZER_BATCH_SIZE = 64
+_PROGRESS_INTERVAL = 10_000
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,11 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
         if self.mode != "train" or strategy == "Truncate":
             return [(idx, None, 0) for idx in range(sample_count)]
 
+        logger.info(
+            "Preparing %s long-sample index for %s training samples.",
+            strategy,
+            sample_count,
+        )
         cache_path = get_cache_path(self, strategy)
         cached = load_index(cache_path, sample_count)
         if cached is not None:
@@ -50,9 +58,8 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
             return cached
 
         started_at = time.perf_counter()
-        sample_layouts = self._compute_sample_layouts_batched()
-        sample_index, skipped, windows, all_masked = self._index_from_layouts(
-            sample_layouts, strategy
+        sample_index, skipped, windows, all_masked = self._build_index_streaming(
+            strategy
         )
         save_index(cache_path, sample_index)
         logger.info(
@@ -66,8 +73,35 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
         )
         return sample_index
 
+    def _build_index_streaming(
+        self, strategy: str
+    ) -> tuple[list[tuple[int, int | None, int]], int, int, int]:
+        """Build the index batch-by-batch without retaining every layout."""
+        sample_index: list[tuple[int, int | None, int]] = []
+        skipped = 0
+        windows = 0
+        all_masked = 0
+
+        for sample_offset, sample_layouts in self._iter_sample_layout_batches():
+            batch_index, batch_skipped, batch_windows, batch_all_masked = (
+                self._index_from_layouts(
+                    sample_layouts,
+                    strategy,
+                    sample_offset=sample_offset,
+                )
+            )
+            sample_index.extend(batch_index)
+            skipped += batch_skipped
+            windows += batch_windows
+            all_masked += batch_all_masked
+
+        return sample_index, skipped, windows, all_masked
+
     def _index_from_layouts(
-        self, sample_layouts: list[_SampleLayout], strategy: str
+        self,
+        sample_layouts: list[_SampleLayout],
+        strategy: str,
+        sample_offset: int = 0,
     ) -> tuple[list[tuple[int, int | None, int]], int, int, int]:
         max_length = int(self.cfg.tokenizer.max_length)
         overlap = int(getattr(self.cfg.tokenizer, "sliding_window_overlap", 0))
@@ -76,7 +110,8 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
         windows_created = 0
         all_masked = 0
 
-        for sample_idx, layout in enumerate(sample_layouts):
+        for local_idx, layout in enumerate(sample_layouts):
+            sample_idx = sample_offset + local_idx
             if layout.length <= max_length:
                 if self._window_has_shifted_target(
                     layout,
@@ -166,15 +201,146 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
             for span_start, span_end in layout.trainable_spans
         )
 
+    def _is_pure_text_training(self) -> bool:
+        """Return True for the raw-text continued-pretraining representation."""
+        if not bool(getattr(self.cfg.dataset, "train_text_column", False)):
+            return False
+        prompt_column = getattr(self.cfg.dataset, "prompt_column", None)
+        if isinstance(prompt_column, (list, tuple)) and len(prompt_column) == 1:
+            prompt_column = prompt_column[0]
+        answer_column = getattr(self.cfg.dataset, "answer_column", None)
+        if prompt_column is None or str(prompt_column) != str(answer_column):
+            return False
+        if getattr(self.cfg.dataset, "parent_id_column", "None") not in (None, "None"):
+            return False
+        if getattr(self.cfg.dataset, "system_column", "None") not in (None, "None"):
+            return False
+        if len(self.conversation_chain_handler) == 0:
+            return False
+        try:
+            first_sample = self.conversation_chain_handler[0]
+            return first_sample.get("prompts", []) == [PLAIN_TEXT_PROMPT]
+        except (IndexError, KeyError, TypeError):
+            return False
+
+    def _full_text_input_ids(self, text: str) -> torch.Tensor:
+        """Tokenize one raw text sample without the normal max-length truncation."""
+        kwargs = {
+            "add_special_tokens": False,
+            "truncation": False,
+            "return_attention_mask": False,
+            "return_token_type_ids": False,
+        }
+        try:
+            encoded = self.tokenizer(text, return_tensors="pt", **kwargs)
+        except TypeError:
+            encoded = self.tokenizer(
+                text, return_tensors="pt", add_special_tokens=False
+            )
+        input_ids = encoded["input_ids"]
+        if isinstance(input_ids, torch.Tensor):
+            if input_ids.ndim == 2:
+                input_ids = input_ids[0]
+            return input_ids.to(dtype=torch.long)
+        if isinstance(input_ids, (list, tuple)):
+            if input_ids and isinstance(input_ids[0], (list, tuple, np.ndarray)):
+                input_ids = input_ids[0]
+            return torch.tensor(input_ids, dtype=torch.long)
+        raise TypeError(f"Unsupported tokenizer output type: {type(input_ids)!r}")
+
+    def _get_input_ids_labels_and_encodings(
+        self, idx: int, augment: bool = True, trim_to_max_length: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+        """Keep a raw-text article intact when Sliding Window needs full tokens."""
+        strategy = getattr(self.cfg.tokenizer, "long_sample_strategy", "Truncate")
+        if (
+            self.mode == "train"
+            and strategy == "Sliding Window"
+            and not trim_to_max_length
+            and self._is_pure_text_training()
+        ):
+            sample = self.conversation_chain_handler[idx]
+            answer = sample.get("answers", [""])[-1]
+            answer = self.parse_answer(self.cfg, answer)
+            input_ids = self._full_text_input_ids(answer)
+            labels = input_ids.clone()
+            empty_prompt = torch.empty(0, dtype=torch.long)
+            return input_ids, labels, [empty_prompt], [input_ids]
+
+        return super()._get_input_ids_labels_and_encodings(
+            idx,
+            augment=augment,
+            trim_to_max_length=trim_to_max_length,
+        )
+
     def _compute_sample_lengths_batched(self) -> list[int]:
         """Compute exact serial-encoding lengths without creating tensors."""
         return [layout.length for layout in self._compute_sample_layouts_batched()]
 
     def _compute_sample_layouts_batched(self) -> list[_SampleLayout]:
-        """Compute exact lengths and trainable label spans in tokenizer batches."""
+        """Collect batched layouts for callers that explicitly request all of them."""
+        result: list[_SampleLayout] = []
+        for _, sample_layouts in self._iter_sample_layout_batches():
+            result.extend(sample_layouts)
+        return result
+
+    def _iter_sample_layout_batches(
+        self,
+    ) -> Iterator[tuple[int, list[_SampleLayout]]]:
+        """Yield exact layouts in bounded batches instead of one giant list."""
+        if self._is_pure_text_training():
+            yield from self._iter_pure_text_layout_batches()
+            return
+        yield from self._iter_chat_layout_batches()
+
+    def _iter_pure_text_layout_batches(
+        self,
+    ) -> Iterator[tuple[int, list[_SampleLayout]]]:
+        """Measure full raw-text lengths without constructing chat structures."""
+        sample_count = len(self.conversation_chain_handler)
+        next_progress = _PROGRESS_INTERVAL
+        answers = self.conversation_chain_handler.answers
+
+        logger.info(
+            "Text-only Sliding Window measures full article token lengths in bounded "
+            "batches; tokenizer.max_length=%s is applied only to the final windows.",
+            self.cfg.tokenizer.max_length,
+        )
+        for first in range(0, sample_count, _SAMPLE_BATCH_SIZE):
+            last = min(first + _SAMPLE_BATCH_SIZE, sample_count)
+            texts = [
+                self.parse_answer(self.cfg, str(answers[idx]))
+                for idx in range(first, last)
+            ]
+            token_lengths = self._batch_token_lengths(
+                texts,
+                truncate_to_max_length=False,
+            )
+            layouts = [
+                _SampleLayout(
+                    length=token_length,
+                    trainable_spans=((0, token_length),) if token_length else (),
+                )
+                for token_length in token_lengths
+            ]
+            yield first, layouts
+
+            if last >= next_progress:
+                logger.info(
+                    "Indexed full raw-text token lengths for %s/%s samples.",
+                    last,
+                    sample_count,
+                )
+                while next_progress <= last:
+                    next_progress += _PROGRESS_INTERVAL
+
+    def _iter_chat_layout_batches(
+        self,
+    ) -> Iterator[tuple[int, list[_SampleLayout]]]:
+        """Compute chat layouts in tokenizer batches using bounded memory."""
         sample_count = len(self.conversation_chain_handler)
         max_length = int(self.cfg.tokenizer.max_length)
-        result: list[_SampleLayout] = []
+        next_progress = _PROGRESS_INTERVAL
 
         for first in range(0, sample_count, _SAMPLE_BATCH_SIZE):
             last = min(first + _SAMPLE_BATCH_SIZE, sample_count)
@@ -213,6 +379,7 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
                     records, self._batch_token_lengths(texts), strict=True
                 )
             }
+            layouts: list[_SampleLayout] = []
 
             for local_idx, sample in enumerate(prepared_samples):
                 turns = list(
@@ -259,9 +426,7 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
 
                     prompt_parts = self._prompt_parts_with_masks(prompt)
                     prompt_part_lengths = [
-                        token_lengths.get(
-                            (local_idx, turn_idx, "prompt", part_idx), 0
-                        )
+                        token_lengths.get((local_idx, turn_idx, "prompt", part_idx), 0)
                         for part_idx in range(len(prompt_parts))
                     ]
                     left_trim = max(sum(prompt_part_lengths) - max_length, 0)
@@ -292,20 +457,22 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
                         trainable_spans,
                     )
 
-                result.append(
+                layouts.append(
                     _SampleLayout(
                         length=position,
                         trainable_spans=tuple(trainable_spans),
                     )
                 )
 
-            if last < sample_count and last % 10000 == 0:
+            yield first, layouts
+            if last >= next_progress:
                 logger.info(
                     "Indexed supervised token layouts for %s/%s samples.",
                     last,
                     sample_count,
                 )
-        return result
+                while next_progress <= last:
+                    next_progress += _PROGRESS_INTERVAL
 
     @staticmethod
     def _append_segment(
@@ -338,9 +505,7 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
             parts.append((self.cfg.tokenizer._tokenizer_eos_token, False))
         parts.append(
             (
-                codecs.decode(
-                    self.cfg.dataset.text_answer_separator, "unicode_escape"
-                ),
+                codecs.decode(self.cfg.dataset.text_answer_separator, "unicode_escape"),
                 False,
             )
         )
@@ -349,29 +514,54 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
     def _prompt_parts(self, prompt: str) -> list[str]:
         return [part for part, _ in self._prompt_parts_with_masks(prompt)]
 
-    def _batch_token_lengths(self, texts: list[str]) -> list[int]:
+    def _batch_token_lengths(
+        self,
+        texts: list[str],
+        *,
+        truncate_to_max_length: bool = True,
+    ) -> list[int]:
         lengths: list[int] = []
-        for first in range(0, len(texts), _TOKENIZER_BATCH_SIZE):
-            batch = texts[first : first + _TOKENIZER_BATCH_SIZE]
-            batch_lengths = self._try_batch_lengths(batch)
+        batch_size = (
+            _TOKENIZER_BATCH_SIZE
+            if truncate_to_max_length
+            else _FULL_LENGTH_TOKENIZER_BATCH_SIZE
+        )
+        for first in range(0, len(texts), batch_size):
+            batch = texts[first : first + batch_size]
+            batch_lengths = self._try_batch_lengths(
+                batch,
+                truncate_to_max_length=truncate_to_max_length,
+            )
             if batch_lengths is None:
-                batch_lengths = [self._single_length(text) for text in batch]
+                batch_lengths = [
+                    self._single_length(
+                        text,
+                        truncate_to_max_length=truncate_to_max_length,
+                    )
+                    for text in batch
+                ]
             lengths.extend(batch_lengths)
         return lengths
 
-    def _try_batch_lengths(self, texts: list[str]) -> list[int] | None:
+    def _try_batch_lengths(
+        self,
+        texts: list[str],
+        *,
+        truncate_to_max_length: bool = True,
+    ) -> list[int] | None:
         if len(texts) < 2:
             return None
+        tokenizer_kwargs: dict[str, Any] = {
+            "add_special_tokens": False,
+            "padding": False,
+            "return_attention_mask": False,
+            "return_token_type_ids": False,
+            "truncation": truncate_to_max_length,
+        }
+        if truncate_to_max_length:
+            tokenizer_kwargs["max_length"] = int(self.cfg.tokenizer.max_length)
         try:
-            input_ids = self.tokenizer(
-                texts,
-                add_special_tokens=False,
-                truncation=True,
-                max_length=int(self.cfg.tokenizer.max_length),
-                padding=False,
-                return_attention_mask=False,
-                return_token_type_ids=False,
-            )["input_ids"]
+            input_ids = self.tokenizer(texts, **tokenizer_kwargs)["input_ids"]
         except (TypeError, ValueError, KeyError, AttributeError):
             return None
 
@@ -389,15 +579,22 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
             return None
         return [len(sequence) for sequence in sequences]
 
-    def _single_length(self, text: str) -> int:
-        return len(
-            self.encode(
-                self.tokenizer,
-                text,
-                int(self.cfg.tokenizer.max_length),
-                "right",
-            )["input_ids"]
-        )
+    def _single_length(
+        self,
+        text: str,
+        *,
+        truncate_to_max_length: bool = True,
+    ) -> int:
+        if truncate_to_max_length:
+            return len(
+                self.encode(
+                    self.tokenizer,
+                    text,
+                    int(self.cfg.tokenizer.max_length),
+                    "right",
+                )["input_ids"]
+            )
+        return len(self._full_text_input_ids(text))
 
 
 def install_fast_sliding_window() -> None:

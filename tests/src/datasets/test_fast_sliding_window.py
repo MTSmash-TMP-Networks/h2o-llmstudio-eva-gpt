@@ -91,6 +91,23 @@ def make_cfg(
     return cfg
 
 
+def make_text_only_cfg(max_length=10, overlap=2, backbone="unit-test"):
+    cfg = make_cfg(
+        strategy="Sliding Window",
+        overlap=overlap,
+        max_length=max_length,
+        backbone=backbone,
+    )
+    cfg.dataset.train_text_column = True
+    cfg.dataset.prompt_column = ("Text",)
+    cfg.dataset.answer_column = "Text"
+    cfg.dataset.system_column = "None"
+    cfg.dataset.parent_id_column = "None"
+    cfg.dataset.id_column = "None"
+    cfg.dataset.add_eos_token_to_answer = False
+    return cfg
+
+
 def test_fast_dataset_is_installed():
     assert issubclass(CustomDataset, FastSlidingWindowDataset)
 
@@ -108,6 +125,23 @@ def test_fast_sliding_window_keeps_exact_window_semantics():
     assert dataset.sample_index == [(0, 0, 0), (0, 4, 6)]
     assert tokenizer.batch_calls == 1
     assert tokenizer.scalar_calls == 0
+
+
+def test_text_only_sliding_window_uses_full_article_length():
+    tokenizer = BatchCharacterTokenizer()
+    df = pd.DataFrame({"Text": ["x" * 25]})
+
+    with patch(
+        "llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer",
+        return_value=tokenizer,
+    ):
+        dataset = CustomDataset(df, make_text_only_cfg(), mode="train")
+
+    assert dataset.sample_index == [(0, 0, 0), (0, 8, 2), (0, 15, 3)]
+    second_window = dataset[1]
+    assert second_window["input_ids"].tolist() == list(range(9, 19))
+    assert second_window["labels"][:2].tolist() == [-100, -100]
+    assert second_window["labels"][2:].tolist() == list(range(11, 19))
 
 
 def test_batched_lengths_match_full_training_encodings():
@@ -190,6 +224,40 @@ def test_sample_index_cache_skips_tokenization_on_next_start(tmp_path, monkeypat
     assert second_tokenizer.scalar_calls == 0
     assert second_dataset.sample_index == first_dataset.sample_index
     assert list((tmp_path / "sample_indices").glob("*.npy"))
+
+
+def test_prepartitioned_cache_skips_full_text_dataframe_hash(tmp_path, monkeypatch):
+    monkeypatch.setenv("H2O_LLM_STUDIO_CACHE_DIR", str(tmp_path / "cache"))
+    dataset_dir = tmp_path / "wikipedia.parquet"
+    dataset_dir.mkdir()
+    pd.DataFrame({"text": ["source-row"]}).to_parquet(
+        dataset_dir / "part-000.parquet", index=False
+    )
+
+    cfg = make_cfg(backbone="cache-test")
+    cfg.dataset.train_dataframe = str(dataset_dir)
+    cfg.dataset.validation_dataframe = str(dataset_dir)
+    cfg.environment._local_rank = 0
+    cfg.environment._world_size = 1
+
+    df = pd.DataFrame({"prompt": ["p" * 15], "answer": ["a" * 15]})
+    df.attrs["_llm_studio_rank_partitioned_parquet"] = True
+    tokenizer = BatchCharacterTokenizer()
+
+    with (
+        patch(
+            "llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer",
+            return_value=tokenizer,
+        ),
+        patch(
+            "llm_studio.src.datasets.sliding_window_cache.pd.util.hash_pandas_object",
+            side_effect=AssertionError("full text dataframe hash must not run"),
+        ),
+    ):
+        dataset = CustomDataset(df, cfg, mode="train")
+
+    assert dataset.sample_index
+    assert list((tmp_path / "cache" / "sample_indices").glob("*.npy"))
 
 
 def test_cache_key_changes_with_overlap(tmp_path, monkeypatch):
