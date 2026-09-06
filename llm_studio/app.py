@@ -10,9 +10,11 @@ from h2o_wave import Q, app, copy_expando, main, ui  # noqa: F401
 
 from llm_studio.app_utils.handlers import handle
 from llm_studio.app_utils.huggingface_import import install_huggingface_import_extension
+from llm_studio.app_utils.huggingface_parquet import install_parquet_directory_support
 from llm_studio.app_utils.initializers import initialize_app, initialize_client
 from llm_studio.app_utils.sections.common import heap_redact, interface
 
+install_parquet_directory_support()
 install_huggingface_import_extension()
 
 logger = logging.getLogger(__name__)
