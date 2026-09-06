@@ -41,6 +41,14 @@ async def serve(q: Q) -> None:
     copy_expando(q.args, q.client)
 
     await initialize_client(q)
+
+    # Training mode is import-specific. Do not leak a previous Text-only choice
+    # into the next newly imported or edited dataset; edit mode will infer the
+    # persisted representation from the dataset configuration again.
+    if q.args.__wave_submission_name__ in ("dataset/import", "dataset/edit"):
+        q.client["dataset/import/training_mode"] = None
+        q.client["dataset/import/text_column"] = None
+
     await handle(q)
 
     if not q.args["experiment/display/chat/chatbot"]:
