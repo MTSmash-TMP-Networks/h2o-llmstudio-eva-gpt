@@ -140,7 +140,9 @@ def _handler_init_arrow(self: Any, df: pd.DataFrame, cfg: Any) -> None:
         if bool(non_empty_mask.all()):
             sample_count = len(df)
             self.plain_text_mask = pd.Series(True, index=df.index, dtype=bool)
-            self.conversation_chain_ids = chains._SingletonConversationChains(sample_count)
+            self.conversation_chain_ids = chains._SingletonConversationChains(
+                sample_count
+            )
             self.prompts = chains._ConstantTextSequence(
                 chains.PLAIN_TEXT_PROMPT, sample_count
             )
@@ -172,7 +174,9 @@ def install_large_text_arrow_memory() -> None:
     from llm_studio.src.utils import sharded_parquet_training
 
     _ORIGINAL_CLEAN_MISSING = text_utils.clean_missing_text_values
-    _ORIGINAL_HANDLER_INIT = conversation_chain_handler.ConversationChainHandler.__init__
+    _ORIGINAL_HANDLER_INIT = (
+        conversation_chain_handler.ConversationChainHandler.__init__
+    )
 
     # The sharded training module resolves these helpers through module globals at
     # runtime, so replacing them here keeps its existing rank balancing/splitting
