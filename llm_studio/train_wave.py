@@ -82,7 +82,16 @@ if __name__ == "__main__":
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
     from llm_studio.src.utils.logging_utils import initialize_logging, write_flag
+    from llm_studio.src.utils.sharded_parquet_training import (
+        install_sharded_parquet_training_support,
+    )
     from llm_studio.src.utils.utils import kill_child_processes_and_current
+
+    # The Wave app installs sharded-Parquet support in its own process. Training is
+    # launched as a separate Python process, so install the core reader here too.
+    # This preserves logical column aliases such as source `text` -> trainer `Text`.
+    install_sharded_parquet_training_support()
+
     from llm_studio.train import run
 
     cfg = load_config_yaml(parser_args.yaml)
