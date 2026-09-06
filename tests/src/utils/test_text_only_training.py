@@ -12,6 +12,7 @@ from llm_studio.app_utils.huggingface_import import (
 from llm_studio.app_utils.text_only_training import (
     _plain_text_mask_with_text_only,
     _preferred_text_column,
+    _training_mode_from_values,
     get_text_only_column,
     is_text_only_config,
 )
@@ -57,6 +58,13 @@ def test_chat_config_is_not_misdetected_as_text_only():
 def test_disabled_raw_text_switch_remains_chat_mode():
     cfg = _cfg(train_text_column=False)
     assert is_text_only_config(cfg) is False
+
+
+def test_explicit_training_mode_is_derived_from_persisted_dataset_fields():
+    assert _training_mode_from_values(False, ("instruction",), "output") == "chat"
+    assert _training_mode_from_values(True, ("instruction",), "output") == "mixed"
+    assert _training_mode_from_values(True, ("Text",), "Text") == "text_only"
+    assert _training_mode_from_values(True, "content", "content") == "text_only"
 
 
 def test_preferred_text_column_prioritizes_common_corpus_names():
