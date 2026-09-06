@@ -2,12 +2,15 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from llm_studio.app_utils import large_dataset_statistics as large_stats
 from llm_studio.app_utils.huggingface_parquet import (
     limit_parquet_directory_reads,
     list_parquet_shards,
     write_parquet_directory_metadata,
 )
+from llm_studio.app_utils.sections import dataset as dataset_section
 from llm_studio.python_configs import cfg_checks
+from llm_studio.src.datasets import conversation_chain_handler as chain_handler
 from llm_studio.src.utils import data_utils
 from llm_studio.src.utils import sharded_parquet_training as sharded_training
 from llm_studio.src.utils.sharded_parquet_training import (
@@ -257,3 +260,103 @@ def test_prepartitioned_dataset_balances_encoded_sample_count(monkeypatch):
     assert len(dataset) == 5
     assert dataset.sample_index == [0, 1, 2, 3, 4]
     assert getattr(dataset, sharded_training._PREPARTITIONED_MARKER) is True
+
+
+def test_pure_text_handler_skips_generic_chat_materialization(monkeypatch):
+    rows = 2000
+    df = pd.DataFrame({"Text": [f"article text {index}" for index in range(rows)]})
+    cfg = SimpleNamespace(
+        dataset=SimpleNamespace(
+            train_text_column=True,
+            prompt_column=("Text",),
+            answer_column="Text",
+            parent_id_column="None",
+            system_column="None",
+        )
+    )
+
+    def fail_generic_get_texts(*args, **kwargs):
+        raise AssertionError("generic chat text materialization must not run")
+
+    monkeypatch.setattr(chain_handler, "get_texts", fail_generic_get_texts)
+    monkeypatch.setattr(chain_handler, "_patch_plain_text_custom_dataset", lambda: None)
+
+    handler = chain_handler.ConversationChainHandler(df, cfg)
+
+    assert len(handler) == rows
+    assert not isinstance(handler.conversation_chain_ids, list)
+    assert handler.conversation_chain_ids[1999] == [1999]
+    assert handler[1999] == {
+        "prompts": [chain_handler.PLAIN_TEXT_PROMPT],
+        "answers": ["article text 1999"],
+        "systems": [""],
+    }
+
+
+def test_same_sharded_train_and_validation_path_is_loaded_once(tmp_path, monkeypatch):
+    dataset_dir = _make_many_shards(tmp_path, shards=4, rows_per_shard=2)
+    calls = []
+
+    def fake_rank_reader(path, rank, world_size):
+        calls.append((path, rank, world_size))
+        return pd.DataFrame({"Text": [f"article-{index}" for index in range(20)]})
+
+    monkeypatch.setattr(
+        sharded_training, "_read_rank_partitioned_dataframe", fake_rank_reader
+    )
+    monkeypatch.setattr(sharded_training, "_distributed_min", lambda value, cfg: value)
+    monkeypatch.setattr(sharded_training, "_ORIGINAL_READ_DATAFRAME", lambda path: None)
+
+    dataset_class = SimpleNamespace(preprocess_dataframe=lambda df, cfg: df)
+    cfg = SimpleNamespace(
+        dataset=SimpleNamespace(
+            train_dataframe=str(dataset_dir),
+            validation_dataframe=str(dataset_dir),
+            validation_strategy="custom",
+            validation_size=0.2,
+            prompt_column=("Text",),
+            answer_column="Text",
+            data_sample=1.0,
+            data_sample_choice=("Train", "Validation"),
+            dataset_class=dataset_class,
+        ),
+        environment=SimpleNamespace(
+            _local_rank=0,
+            _world_size=2,
+            _distributed_inference=True,
+        ),
+        training=SimpleNamespace(train_validation_data=False),
+    )
+
+    train_df, val_df = sharded_training._prepare_rank_partitioned_data(cfg)
+
+    assert len(calls) == 1
+    assert len(train_df) == 16
+    assert len(val_df) == 4
+
+
+def test_sharded_statistics_use_bounded_sample(monkeypatch):
+    observed = []
+
+    def fake_read_dataframe(path, n_rows=-1, **kwargs):
+        observed.append((path, n_rows))
+        return pd.DataFrame({"Text": ["eins zwei", "drei vier fünf"]})
+
+    cfg = SimpleNamespace()
+    monkeypatch.setattr(dataset_section, "read_dataframe", fake_read_dataframe)
+    monkeypatch.setattr(large_stats, "parquet_directory_row_count", lambda path: 2_845_308)
+    monkeypatch.setattr(large_stats, "load_config_yaml", lambda path: cfg)
+    monkeypatch.setattr(
+        large_stats,
+        "get_conversation_chains",
+        lambda df, cfg, limit_chained_samples: [
+            {"systems": [""], "prompts": [""], "answers": [text]}
+            for text in df["Text"].tolist()
+        ],
+    )
+
+    stats = large_stats._compute_sharded_statistics("wikipedia.parquet", "cfg.yaml")
+
+    assert observed == [("wikipedia.parquet", 10_000)]
+    assert stats["_sampled_rows"] == 2
+    assert stats["_total_rows"] == 2_845_308
