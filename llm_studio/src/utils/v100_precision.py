@@ -146,9 +146,7 @@ def _deepspeed_runtime_load_dtype(cfg: Any) -> torch.dtype | None:
     if getattr(cfg.architecture, "backbone_dtype", None) != "float32":
         return None
 
-    mixed_precision_dtype = getattr(
-        cfg.environment, "mixed_precision_dtype", "float16"
-    )
+    mixed_precision_dtype = getattr(cfg.environment, "mixed_precision_dtype", "float16")
     if mixed_precision_dtype == "float16":
         return torch.float16
     if mixed_precision_dtype == "bfloat16":
