@@ -81,6 +81,7 @@ if __name__ == "__main__":
         LLMTrainingException,
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
+    from llm_studio.src.utils.local_model_utils import ensure_local_eva_model_type
     from llm_studio.src.utils.logging_utils import initialize_logging, write_flag
     from llm_studio.src.utils.sharded_parquet_training import (
         install_sharded_parquet_training_support,
@@ -95,6 +96,11 @@ if __name__ == "__main__":
     from llm_studio.train import run
 
     cfg = load_config_yaml(parser_args.yaml)
+
+    # Backward compatibility for locally created EvaGPT models whose older
+    # config.json omitted Hugging Face's model_type discriminator. Repair this
+    # before either AutoTokenizer or AutoConfig sees the local backbone path.
+    ensure_local_eva_model_type(cfg.llm_backbone)
 
     flag_path = os.path.join(cfg.output_directory, "flags{}.json")
 
