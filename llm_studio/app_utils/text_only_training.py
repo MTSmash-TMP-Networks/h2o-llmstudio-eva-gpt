@@ -227,8 +227,7 @@ def _get_dataset_elements_with_training_mode(cfg: Any, q: Q) -> list[Any]:
         items = [
             item
             for item in items
-            if getattr(item, "name", None)
-            != "dataset/import/cfg/train_text_column"
+            if getattr(item, "name", None) != "dataset/import/cfg/train_text_column"
         ]
 
     return _mode_controls(q, mode, columns) + items
@@ -328,7 +327,9 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
     _ORIGINAL_GET_DATASET_ELEMENTS = app_utils.get_dataset_elements
     _ORIGINAL_GET_PLAIN_TEXT_MASK = chain_module.get_plain_text_mask
     _ORIGINAL_CONFIGURED_TEXT_COLUMNS = chain_module._configured_text_columns
-    _ORIGINAL_APPLY_PLAIN_TEXT_ROWS = chain_module.ConversationChainHandler._apply_plain_text_rows
+    _ORIGINAL_APPLY_PLAIN_TEXT_ROWS = (
+        chain_module.ConversationChainHandler._apply_plain_text_rows
+    )
 
     app_utils.get_dataset_elements = _get_dataset_elements_with_training_mode
     dataset_section.get_dataset_elements = _get_dataset_elements_with_training_mode
