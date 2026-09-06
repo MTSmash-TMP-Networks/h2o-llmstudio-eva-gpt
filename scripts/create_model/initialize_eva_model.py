@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import shutil
 from pathlib import Path
@@ -23,8 +24,6 @@ def _normalize_tokenizer_config(out_dir: str) -> None:
     if not cfg_path.exists():
         return
 
-    import json
-
     with open(cfg_path, encoding="utf-8") as f:
         cfg = json.load(f)
 
@@ -34,9 +33,31 @@ def _normalize_tokenizer_config(out_dir: str) -> None:
 
     if cfg.get("tokenizer_class") == "TokenizersBackend":
         cfg["tokenizer_class"] = "PreTrainedTokenizerFast"
+    elif not cfg.get("tokenizer_class") and (Path(out_dir) / "tokenizer.json").is_file():
+        cfg["tokenizer_class"] = "PreTrainedTokenizerFast"
 
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+
+def _normalize_model_config(out_dir: str, model_type: str) -> None:
+    """Persist the HF model discriminator even for minimal/custom configs."""
+    if not model_type:
+        return
+
+    cfg_path = Path(out_dir) / "config.json"
+    if not cfg_path.is_file():
+        return
+
+    with cfg_path.open(encoding="utf-8") as cfg_file:
+        cfg = json.load(cfg_file)
+    if cfg.get("model_type") == model_type:
+        return
+
+    cfg["model_type"] = model_type
+    with cfg_path.open("w", encoding="utf-8") as cfg_file:
+        json.dump(cfg, cfg_file, indent=2)
+        cfg_file.write("\n")
 
 
 def main() -> None:
@@ -81,7 +102,11 @@ def main() -> None:
     cfg.hidden_act = "silu"
     cfg.max_position_embeddings = args.new_max_pos
     cfg.sliding_window = args.orig_max_pos
-    cfg.layer_types = ["sliding_attention", "sliding_attention", "full_attention"] * 5 + ["sliding_attention"]
+    cfg.layer_types = [
+        "sliding_attention",
+        "sliding_attention",
+        "full_attention",
+    ] * 5 + ["sliding_attention"]
     cfg.rope_parameters = {
         "rope_type": "yarn",
         "rope_theta": 10000.0,
@@ -99,11 +124,18 @@ def main() -> None:
     cfg.use_cache = False
     cfg._attn_implementation = args.attn_implementation
 
-    model = AutoModelForCausalLM.from_config(cfg, attn_implementation=args.attn_implementation)
+    model = AutoModelForCausalLM.from_config(
+        cfg, attn_implementation=args.attn_implementation
+    )
     model.to(dtype=torch.float32, device="cpu")
     model.save_pretrained(args.out_dir, safe_serialization=True, max_shard_size="100GB")
     cfg.save_pretrained(args.out_dir)
     tok.save_pretrained(args.out_dir)
+
+    expected_model_type = getattr(cfg, "model_type", "")
+    if not expected_model_type and not args.base_model:
+        expected_model_type = "eva_gpt"
+    _normalize_model_config(args.out_dir, expected_model_type)
 
     # Ensure the model package contains canonical tokenizer metadata files
     # even when source tokenizers provide custom/minimal configs.
@@ -115,9 +147,9 @@ def main() -> None:
     if tok.pad_token is not None:
         special_tokens_map["pad_token"] = tok.pad_token
     if special_tokens_map:
-        import json
-
-        with open(Path(args.out_dir) / "special_tokens_map.json", "w", encoding="utf-8") as f:
+        with open(
+            Path(args.out_dir) / "special_tokens_map.json", "w", encoding="utf-8"
+        ) as f:
             json.dump(special_tokens_map, f, indent=2)
 
     _normalize_tokenizer_config(args.out_dir)
