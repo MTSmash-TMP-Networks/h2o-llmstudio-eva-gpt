@@ -64,7 +64,9 @@ def _file_signature(path: str | os.PathLike[str]) -> dict[str, Any]:
     }
 
 
-def _rank_source_signatures(path: Any, rank: int, world_size: int) -> list[dict[str, Any]]:
+def _rank_source_signatures(
+    path: Any, rank: int, world_size: int
+) -> list[dict[str, Any]]:
     """Describe one rank's source files without reading their text payload."""
     if path in (None, "", "None"):
         return []
@@ -113,9 +115,7 @@ def _prepartitioned_source_fingerprint(dataset: Any) -> str | None:
             validation_path, rank, world_size
         ),
         "row_count": int(len(dataset.df)),
-        "validation_strategy": getattr(
-            cfg.dataset, "validation_strategy", "automatic"
-        ),
+        "validation_strategy": getattr(cfg.dataset, "validation_strategy", "automatic"),
         "validation_size": float(getattr(cfg.dataset, "validation_size", 0.0) or 0.0),
         "data_sample": float(getattr(cfg.dataset, "data_sample", 1.0) or 1.0),
         "data_sample_choice": list(
@@ -233,9 +233,7 @@ def load_index(
         return None
 
 
-def save_index(
-    path: Path | None, index: Sequence[tuple[int, int | None, int]]
-) -> None:
+def save_index(path: Path | None, index: Sequence[tuple[int, int | None, int]]) -> None:
     """Atomically save a sample index without duplicating it as a Python list."""
     if path is None:
         return
