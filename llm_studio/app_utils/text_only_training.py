@@ -12,6 +12,7 @@ from h2o_wave import Q, ui
 logger = logging.getLogger(__name__)
 
 _TEXT_MODE = "text_only"
+_MIXED_MODE = "mixed"
 _CHAT_MODE = "chat"
 _MODE_KEY = "dataset/import/training_mode"
 _TEXT_COLUMN_KEY = "dataset/import/text_column"
@@ -19,6 +20,7 @@ _TEXT_COLUMN_KEY = "dataset/import/text_column"
 _ORIGINAL_GET_DATASET_ELEMENTS = None
 _ORIGINAL_GET_PLAIN_TEXT_MASK = None
 _ORIGINAL_CONFIGURED_TEXT_COLUMNS = None
+_ORIGINAL_HANDLER_INIT = None
 _ORIGINAL_APPLY_PLAIN_TEXT_ROWS = None
 _INSTALLED = False
 
@@ -86,7 +88,7 @@ def _preferred_text_column(columns: list[str]) -> str:
 
 def _infer_import_mode(q: Q, cfg: Any, columns: list[str]) -> str:
     current = q.client[_MODE_KEY]
-    if current in (_CHAT_MODE, _TEXT_MODE):
+    if current in (_CHAT_MODE, _MIXED_MODE, _TEXT_MODE):
         return current
 
     if is_text_only_config(cfg):
@@ -106,7 +108,29 @@ def _infer_import_mode(q: Q, cfg: Any, columns: list[str]) -> str:
     }:
         return _TEXT_MODE
 
+    # Preserve the fork's existing mixed-chat-plus-Text behavior by default.
+    if bool(getattr(cfg, "train_text_column", False)):
+        return _MIXED_MODE
+
     return _CHAT_MODE
+
+
+def _restore_chat_columns(q: Q) -> None:
+    """Clear values that were force-set while Text-only mode was active."""
+    text_column = q.client[_TEXT_COLUMN_KEY]
+    prompt = q.client["dataset/import/cfg/prompt_column"]
+    answer = q.client["dataset/import/cfg/answer_column"]
+
+    if text_column and _single_column(prompt) == text_column:
+        q.client["dataset/import/cfg/prompt_column"] = None
+    if text_column and _single_column(answer) == text_column:
+        q.client["dataset/import/cfg/answer_column"] = None
+    if q.client["dataset/import/cfg/system_column"] == "None":
+        q.client["dataset/import/cfg/system_column"] = None
+    if q.client["dataset/import/cfg/parent_id_column"] == "None":
+        q.client["dataset/import/cfg/parent_id_column"] = None
+    if q.client["dataset/import/cfg/id_column"] == "None":
+        q.client["dataset/import/cfg/id_column"] = None
 
 
 def _apply_text_only_values(q: Q, text_column: str) -> None:
@@ -124,25 +148,10 @@ def _apply_text_only_values(q: Q, text_column: str) -> None:
     q.client["dataset/import/cfg/id_column"] = "None"
 
 
-def _apply_chat_values(q: Q) -> None:
-    q.client[_MODE_KEY] = _CHAT_MODE
-    q.client["dataset/import/cfg/train_text_column"] = False
-
-    # When switching away from text-only, clear fields that were force-set to the
-    # text column so LLM Studio can choose its normal preferred chat columns again.
-    text_column = q.client[_TEXT_COLUMN_KEY]
-    prompt = q.client["dataset/import/cfg/prompt_column"]
-    answer = q.client["dataset/import/cfg/answer_column"]
-    if text_column and _single_column(prompt) == text_column:
-        q.client["dataset/import/cfg/prompt_column"] = None
-    if text_column and _single_column(answer) == text_column:
-        q.client["dataset/import/cfg/answer_column"] = None
-    if q.client["dataset/import/cfg/system_column"] == "None":
-        q.client["dataset/import/cfg/system_column"] = None
-    if q.client["dataset/import/cfg/parent_id_column"] == "None":
-        q.client["dataset/import/cfg/parent_id_column"] = None
-    if q.client["dataset/import/cfg/id_column"] == "None":
-        q.client["dataset/import/cfg/id_column"] = None
+def _apply_chat_values(q: Q, *, mixed: bool) -> None:
+    q.client[_MODE_KEY] = _MIXED_MODE if mixed else _CHAT_MODE
+    q.client["dataset/import/cfg/train_text_column"] = mixed
+    _restore_chat_columns(q)
 
 
 def _mode_controls(q: Q, mode: str, columns: list[str]) -> list[Any]:
@@ -155,11 +164,12 @@ def _mode_controls(q: Q, mode: str, columns: list[str]) -> list[Any]:
             trigger=True,
             choices=[
                 ui.choice(_CHAT_MODE, "Chat / instruction training"),
+                ui.choice(_MIXED_MODE, "Mixed chat + Text training"),
                 ui.choice(_TEXT_MODE, "Text only / continued pretraining"),
             ],
             tooltip=(
                 "Choose Text only for Wikipedia, books, documentation and other "
-                "plain-text corpora that should be learned without chat formatting."
+                "plain-text corpora. Mixed keeps the existing chat plus Text mode."
             ),
         )
     ]
@@ -224,7 +234,7 @@ def _get_dataset_elements_with_training_mode(cfg: Any, q: Q) -> list[Any]:
             if getattr(item, "name", None) not in _CHAT_DATASET_FIELDS
         ]
     else:
-        _apply_chat_values(q)
+        _apply_chat_values(q, mixed=mode == _MIXED_MODE)
         # Hide the legacy switch; the new Training mode control replaces it.
         items = [
             item
@@ -262,8 +272,17 @@ def _plain_text_mask_with_text_only(df: pd.DataFrame, cfg: Any) -> pd.Series:
     return clean_missing_text_values(df[text_column]).str.strip() != ""
 
 
+def _handler_init_with_text_only(self: Any, df: pd.DataFrame, cfg: Any) -> None:
+    """Keep the selected raw-text column available while the handler is built."""
+    if _ORIGINAL_HANDLER_INIT is None:
+        raise RuntimeError("Text-only handler patch is not installed.")
+
+    self._text_only_column = get_text_only_column(cfg)
+    _ORIGINAL_HANDLER_INIT(self, df, cfg)
+
+
 def _apply_plain_text_rows_with_selected_column(self: Any, df: pd.DataFrame) -> None:
-    text_column = get_text_only_column_from_handler(self, df)
+    text_column = getattr(self, "_text_only_column", None)
     if text_column is None:
         if _ORIGINAL_APPLY_PLAIN_TEXT_ROWS is not None:
             _ORIGINAL_APPLY_PLAIN_TEXT_ROWS(self, df)
@@ -294,29 +313,13 @@ def _apply_plain_text_rows_with_selected_column(self: Any, df: pd.DataFrame) -> 
     ]
 
 
-def get_text_only_column_from_handler(handler: Any, df: pd.DataFrame) -> str | None:
-    """Recover selected text column from the handler's prompt/answer setup."""
-    # The handler does not retain cfg by design. In text-only mode get_texts() was
-    # configured from the same single column as get_answers(), so find the matching
-    # dataframe column by comparing the prepared values.
-    if not getattr(handler, "plain_text_mask", pd.Series(dtype=bool)).any():
-        return None
-
-    for column in df.columns:
-        values = df[column].fillna("").astype(str).tolist()
-        prompts = [str(value) for value in handler.prompts]
-        answers = [str(value) for value in handler.answers]
-        if values == prompts and values == answers:
-            return str(column)
-    return None
-
-
 def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[..., Any]:
     """Install GUI/runtime patches and return a wrapped Wave request handler."""
     global _INSTALLED
     global _ORIGINAL_GET_DATASET_ELEMENTS
     global _ORIGINAL_GET_PLAIN_TEXT_MASK
     global _ORIGINAL_CONFIGURED_TEXT_COLUMNS
+    global _ORIGINAL_HANDLER_INIT
     global _ORIGINAL_APPLY_PLAIN_TEXT_ROWS
 
     if _INSTALLED:
@@ -329,6 +332,7 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
     _ORIGINAL_GET_DATASET_ELEMENTS = app_utils.get_dataset_elements
     _ORIGINAL_GET_PLAIN_TEXT_MASK = chain_module.get_plain_text_mask
     _ORIGINAL_CONFIGURED_TEXT_COLUMNS = chain_module._configured_text_columns
+    _ORIGINAL_HANDLER_INIT = chain_module.ConversationChainHandler.__init__
     _ORIGINAL_APPLY_PLAIN_TEXT_ROWS = (
         chain_module.ConversationChainHandler._apply_plain_text_rows
     )
@@ -337,6 +341,7 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
     dataset_section.get_dataset_elements = _get_dataset_elements_with_training_mode
     chain_module.get_plain_text_mask = _plain_text_mask_with_text_only
     chain_module._configured_text_columns = _configured_text_columns_with_text_only
+    chain_module.ConversationChainHandler.__init__ = _handler_init_with_text_only
     chain_module.ConversationChainHandler._apply_plain_text_rows = (
         _apply_plain_text_rows_with_selected_column
     )
@@ -345,7 +350,7 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
         submission = q.args.__wave_submission_name__
 
         if submission == _MODE_KEY:
-            selected_mode = q.args[_MODE_KEY] or _CHAT_MODE
+            selected_mode = q.args[_MODE_KEY] or _MIXED_MODE
             q.client[_MODE_KEY] = selected_mode
             if selected_mode == _TEXT_MODE:
                 columns = _dataframe_columns(q)
@@ -354,7 +359,7 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
                     text_column = _preferred_text_column(columns)
                 _apply_text_only_values(q, text_column)
             else:
-                _apply_chat_values(q)
+                _apply_chat_values(q, mixed=selected_mode == _MIXED_MODE)
 
             await dataset_section.dataset_import(
                 q,
