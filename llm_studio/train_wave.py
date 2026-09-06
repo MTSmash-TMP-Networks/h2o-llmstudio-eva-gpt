@@ -112,10 +112,10 @@ if __name__ == "__main__":
     # train.py imports the runtime helpers so the low-memory wrappers are captured.
     install_large_text_deepspeed_runtime()
 
-    from llm_studio.train import run
     from llm_studio.src.utils.dense_backbone_low_memory import (
         install_dense_backbone_low_memory,
     )
+    from llm_studio.train import run
 
     # Importing train.py installs the existing V100/DeepSpeed precision wrapper.
     # Extend that wrapper afterwards with Transformers low_cpu_mem_usage.
