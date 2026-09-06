@@ -5,6 +5,8 @@ import pandas as pd
 from llm_studio.app_utils.huggingface_import import (
     _detect_huggingface_columns,
     _prepare_fallback_dataset_for_text_training,
+)
+from llm_studio.app_utils.huggingface_import import (
     _preferred_text_column as _preferred_hf_text_column,
 )
 from llm_studio.app_utils.text_only_training import (
