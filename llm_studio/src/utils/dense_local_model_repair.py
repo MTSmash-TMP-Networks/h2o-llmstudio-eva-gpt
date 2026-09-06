@@ -25,7 +25,9 @@ def _quantization_method(config: dict[str, Any]) -> str:
     quantization = config.get("quantization_config")
     if not isinstance(quantization, dict):
         return ""
-    method = quantization.get("quant_method", quantization.get("quantization_method", ""))
+    method = quantization.get(
+        "quant_method", quantization.get("quantization_method", "")
+    )
     return str(method).strip().lower()
 
 
@@ -36,7 +38,9 @@ def _read_safetensor_header(weight_file: Path) -> dict[str, Any] | None:
             header_size_bytes = tensor_file.read(8)
             if len(header_size_bytes) != 8:
                 return None
-            header_size = int.from_bytes(header_size_bytes, byteorder="little", signed=False)
+            header_size = int.from_bytes(
+                header_size_bytes, byteorder="little", signed=False
+            )
             if header_size <= 0 or header_size > _MAX_SAFETENSOR_HEADER_BYTES:
                 return None
             header = json.loads(tensor_file.read(header_size).decode("utf-8"))
