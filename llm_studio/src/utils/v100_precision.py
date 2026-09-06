@@ -1,7 +1,8 @@
-"""Safe precision policy for full-weight training on FP16-only CUDA GPUs."""
+"""Safe precision and low-memory DeepSpeed policy for CUDA training."""
 
 from __future__ import annotations
 
+import gc
 import logging
 from typing import Any
 
@@ -10,6 +11,9 @@ import torch
 logger = logging.getLogger(__name__)
 
 _deepspeed_owns_mixed_precision = False
+_ORIGINAL_CREATE_NLP_BACKBONE = None
+_ORIGINAL_GET_OPTIMIZER = None
+_ORIGINAL_WRAP_MODEL_DISTRIBUTED = None
 
 
 def _selected_cuda_indices(cfg: Any) -> list[int]:
@@ -113,12 +117,213 @@ def _install_external_autocast_guard() -> None:
     cuda_autocast._llmstudio_deepspeed_guard = True
 
 
+def _is_deepspeed_causal_lm(cfg: Any) -> bool:
+    """Return whether the current run can use the causal-LM DeepSpeed fast path."""
+    environment = getattr(cfg, "environment", None)
+    training = getattr(cfg, "training", None)
+    return bool(
+        environment is not None
+        and training is not None
+        and getattr(environment, "use_deepspeed", False)
+        and not getattr(training, "lora", False)
+        and getattr(cfg, "problem_type", "") == "text_causal_language_modeling"
+    )
+
+
+def _deepspeed_runtime_load_dtype(cfg: Any) -> torch.dtype | None:
+    """Return a compact runtime model dtype while preserving FP32 master updates.
+
+    The UI/config keeps ``backbone_dtype=float32`` for safe full-weight training.
+    When DeepSpeed owns FP16/BF16 mixed precision it can start from a 16-bit
+    trainable replica and create/manage the FP32 master optimizer weights itself.
+    This avoids materializing a full FP32 CUDA replica immediately before
+    ``deepspeed.initialize``.
+    """
+    if not _is_deepspeed_causal_lm(cfg):
+        return None
+    if not getattr(cfg.environment, "mixed_precision", False):
+        return None
+    if getattr(cfg.architecture, "backbone_dtype", None) != "float32":
+        return None
+
+    mixed_precision_dtype = getattr(
+        cfg.environment, "mixed_precision_dtype", "float16"
+    )
+    if mixed_precision_dtype == "float16":
+        return torch.float16
+    if mixed_precision_dtype == "bfloat16":
+        return torch.bfloat16
+    return None
+
+
+def _dtype_overridden_model_class(model_class: Any, runtime_dtype: torch.dtype):
+    """Proxy HF model factory calls while overriding only the runtime load dtype."""
+
+    class RuntimeDtypeModelClass:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            kwargs["torch_dtype"] = runtime_dtype
+            return model_class.from_pretrained(*args, **kwargs)
+
+        @staticmethod
+        def from_config(*args, **kwargs):
+            kwargs["torch_dtype"] = runtime_dtype
+            return model_class.from_config(*args, **kwargs)
+
+    return RuntimeDtypeModelClass
+
+
+def _current_rss_mb() -> float | None:
+    """Return current Linux process RSS without adding another dependency."""
+    try:
+        with open("/proc/self/status", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    return float(line.split()[1]) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _log_memory_snapshot(cfg: Any, stage: str) -> None:
+    """Log host and CUDA memory around the otherwise opaque DeepSpeed startup."""
+    rank = getattr(getattr(cfg, "environment", None), "_local_rank", 0)
+    parts = [f"Rank {rank} memory at {stage}"]
+
+    rss_mb = _current_rss_mb()
+    if rss_mb is not None:
+        parts.append(f"host RSS={rss_mb:.1f} MB")
+
+    environment = getattr(cfg, "environment", None)
+    device = getattr(environment, "_device", None) if environment is not None else None
+    if torch.cuda.is_available() and device is not None:
+        try:
+            free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+            allocated = torch.cuda.memory_allocated(device)
+            reserved = torch.cuda.memory_reserved(device)
+            mib = 1024 * 1024
+            parts.extend(
+                [
+                    f"CUDA allocated={allocated / mib:.1f} MB",
+                    f"reserved={reserved / mib:.1f} MB",
+                    f"free={free_bytes / mib:.1f} MB",
+                    f"total={total_bytes / mib:.1f} MB",
+                ]
+            )
+        except Exception:
+            # Memory diagnostics must never prevent a training run from starting.
+            pass
+
+    logger.info("; ".join(parts))
+
+
+def _memory_efficient_create_nlp_backbone(cfg: Any, model_class=None):
+    """Load DeepSpeed's runtime replica directly in the compute dtype."""
+    if _ORIGINAL_CREATE_NLP_BACKBONE is None:
+        raise RuntimeError("Original create_nlp_backbone is unavailable.")
+
+    if model_class is None:
+        from transformers import AutoModel
+
+        model_class = AutoModel
+
+    runtime_dtype = _deepspeed_runtime_load_dtype(cfg)
+    _log_memory_snapshot(cfg, "before backbone construction")
+    if runtime_dtype is not None:
+        logger.info(
+            "DeepSpeed low-memory model load enabled: runtime backbone replica uses "
+            "%s while DeepSpeed retains FP32 master optimizer weights.",
+            str(runtime_dtype).replace("torch.", ""),
+        )
+        model_class = _dtype_overridden_model_class(model_class, runtime_dtype)
+
+    result = _ORIGINAL_CREATE_NLP_BACKBONE(cfg, model_class=model_class)
+    _log_memory_snapshot(cfg, "after backbone construction")
+    return result
+
+
+def _should_skip_outer_model_to(cfg: Any) -> bool:
+    return _is_deepspeed_causal_lm(cfg) and deepspeed_owns_mixed_precision()
+
+
+def _install_outer_model_to_guard(cfg: Any) -> None:
+    """Let DeepSpeed own backbone placement instead of pre-moving the outer model."""
+    if not _should_skip_outer_model_to(cfg):
+        return
+
+    architecture = getattr(cfg, "architecture", None)
+    model_class = getattr(architecture, "model_class", None)
+    if model_class is None or getattr(
+        model_class, "_llmstudio_deepspeed_to_guard", False
+    ):
+        return
+
+    original_to = model_class.to
+
+    def guarded_to(self, *args, **kwargs):
+        instance_cfg = getattr(self, "cfg", None)
+        if instance_cfg is not None and _should_skip_outer_model_to(instance_cfg):
+            _log_memory_snapshot(instance_cfg, "before DeepSpeed device placement")
+            logger.info(
+                "Rank %s skipping pre-DeepSpeed outer model.to(...); DeepSpeed "
+                "owns backbone device placement and FP16/BF16 conversion.",
+                getattr(instance_cfg.environment, "_local_rank", 0),
+            )
+            return self
+        return original_to(self, *args, **kwargs)
+
+    model_class.to = guarded_to
+    model_class._llmstudio_deepspeed_to_guard = True
+    model_class._llmstudio_original_to = original_to
+
+
+def _get_optimizer_with_memory(model, cfg):
+    if _ORIGINAL_GET_OPTIMIZER is None:
+        raise RuntimeError("Original get_optimizer is unavailable.")
+    if _is_deepspeed_causal_lm(cfg):
+        _log_memory_snapshot(cfg, "before optimizer construction")
+    optimizer = _ORIGINAL_GET_OPTIMIZER(model=model, cfg=cfg)
+    if _is_deepspeed_causal_lm(cfg):
+        _log_memory_snapshot(cfg, "after optimizer construction")
+    return optimizer
+
+
+def _wrap_model_distributed_with_memory(*args, **kwargs):
+    if _ORIGINAL_WRAP_MODEL_DISTRIBUTED is None:
+        raise RuntimeError("Original wrap_model_distributed is unavailable.")
+
+    cfg = kwargs.get("cfg")
+    if cfg is None and len(args) >= 6:
+        cfg = args[5]
+
+    if cfg is not None and _is_deepspeed_causal_lm(cfg):
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+        _log_memory_snapshot(cfg, "immediately before deepspeed.initialize")
+        logger.info(
+            "Rank %s entering deepspeed.initialize after releasing Python/CUDA "
+            "startup caches.",
+            getattr(cfg.environment, "_local_rank", 0),
+        )
+
+    result = _ORIGINAL_WRAP_MODEL_DISTRIBUTED(*args, **kwargs)
+
+    if cfg is not None and _is_deepspeed_causal_lm(cfg):
+        _log_memory_snapshot(cfg, "after deepspeed.initialize")
+    return result
+
+
 def normalize_training_precision(cfg: Any) -> None:
     """Normalize unsafe full-FP16 configurations to stable FP16 AMP training.
 
     Normal DDP keeps trainable parameters in FP32 and uses FP16 autocast plus a
-    GradScaler. DeepSpeed uses its native FP16 engine instead: FP16 model compute,
-    FP32 master optimizer state and DeepSpeed dynamic loss scaling.
+    GradScaler. DeepSpeed uses its native FP16 engine instead: the runtime model
+    can stay in FP16 while DeepSpeed owns FP32 master optimizer state, dynamic loss
+    scaling, backward and optimizer stepping.
     """
     global _deepspeed_owns_mixed_precision
 
@@ -140,9 +345,10 @@ def normalize_training_precision(cfg: Any) -> None:
         environment.mixed_precision = True
         environment.mixed_precision_dtype = "float16"
         logger.info(
-            "Safe FP16 full-weight training enabled: trainable backbone weights "
-            "were promoted from float16 to float32 before distributed wrapping; "
-            "compute remains FP16 through mixed precision."
+            "Safe FP16 full-weight training enabled: the configuration uses an "
+            "FP32 master-weight policy while compute remains FP16 through mixed "
+            "precision. DeepSpeed may materialize its runtime replica directly in "
+            "FP16 to reduce initialization memory."
         )
         backbone_dtype = "float32"
 
@@ -176,6 +382,8 @@ def normalize_training_precision(cfg: Any) -> None:
             "DeepSpeed owns mixed precision for this run; external torch CUDA "
             "autocast is disabled to avoid nested AMP/loss-scaling control."
         )
+
+    _install_outer_model_to_guard(cfg)
 
 
 def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
@@ -248,7 +456,11 @@ def build_deepspeed_config(cfg: Any) -> dict[str, Any]:
 
 
 def install_precision_runtime_patch() -> None:
-    """Install precision fixes before train.py imports the runtime functions."""
+    """Install precision and low-memory fixes before train.py imports helpers."""
+    global _ORIGINAL_CREATE_NLP_BACKBONE
+    global _ORIGINAL_GET_OPTIMIZER
+    global _ORIGINAL_WRAP_MODEL_DISTRIBUTED
+
     from llm_studio.src.utils import modeling_utils
 
     _install_external_autocast_guard()
@@ -256,5 +468,12 @@ def install_precision_runtime_patch() -> None:
     if getattr(modeling_utils, "_v100_precision_patch_installed", False):
         return
 
+    _ORIGINAL_CREATE_NLP_BACKBONE = modeling_utils.create_nlp_backbone
+    _ORIGINAL_GET_OPTIMIZER = modeling_utils.get_optimizer
+    _ORIGINAL_WRAP_MODEL_DISTRIBUTED = modeling_utils.wrap_model_distributed
+
     modeling_utils.get_ds_config = build_deepspeed_config
+    modeling_utils.create_nlp_backbone = _memory_efficient_create_nlp_backbone
+    modeling_utils.get_optimizer = _get_optimizer_with_memory
+    modeling_utils.wrap_model_distributed = _wrap_model_distributed_with_memory
     modeling_utils._v100_precision_patch_installed = True
