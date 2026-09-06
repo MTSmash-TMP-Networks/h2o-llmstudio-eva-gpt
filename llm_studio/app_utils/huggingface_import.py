@@ -16,6 +16,7 @@ from llm_studio.app_utils.huggingface_parquet import (
     write_parquet_directory_metadata,
 )
 from llm_studio.app_utils.utils import get_data_dir, get_valid_temp_data_folder
+from llm_studio.app_utils.wave_utils import busy_dialog
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,12 @@ async def huggingface_download_with_config(
     filename_parts.append(split)
     filename = _safe_filename_part("_".join(filename_parts))
 
+    await busy_dialog(
+        q=q,
+        title="Preparing Hugging Face dataset",
+        text="Checking dataset files and configuration...",
+    )
+
     native_parquet_files = _find_native_parquet_files(
         dataset_name=huggingface_dataset,
         config=config,
@@ -142,6 +149,15 @@ async def huggingface_download_with_config(
             config,
             split,
         )
+        await busy_dialog(
+            q=q,
+            title="Downloading Hugging Face dataset",
+            text=(
+                f"Downloading {len(native_parquet_files)} Parquet files directly. "
+                "Large datasets can take a while, but no second full-size dataset "
+                "copy will be created afterwards."
+            ),
+        )
         _download_native_parquet_dataset(
             dataset_name=huggingface_dataset,
             config=config,
@@ -152,6 +168,11 @@ async def huggingface_download_with_config(
         )
         return huggingface_path, filename
 
+    await busy_dialog(
+        q=q,
+        title="Loading Hugging Face dataset",
+        text="No native Parquet shard set found; using the standard dataset loader...",
+    )
     load_kwargs = {"split": split, "token": token}
     if config is None:
         dataset = load_dataset(huggingface_dataset, **load_kwargs)
