@@ -39,6 +39,11 @@ class StructureAwareSlidingWindowDataset(FastSlidingWindowDataset):
         if self.mode != "train" or strategy == "Truncate":
             return [(idx, None, 0) for idx in range(sample_count)]
 
+        logger.info(
+            "Preparing structure-aware %s index for %s training samples.",
+            strategy,
+            sample_count,
+        )
         # Use a versioned cache namespace. Mixed-text datasets keep their public
         # dataset class name, so changing only the implementation class would not
         # otherwise invalidate their old fixed-stride indices.
@@ -53,9 +58,8 @@ class StructureAwareSlidingWindowDataset(FastSlidingWindowDataset):
             return cached
 
         started_at = time.perf_counter()
-        sample_layouts = self._compute_sample_layouts_batched()
-        sample_index, skipped, windows, all_masked = self._index_from_layouts(
-            sample_layouts, strategy
+        sample_index, skipped, windows, all_masked = self._build_index_streaming(
+            strategy
         )
         save_index(cache_path, sample_index)
         logger.info(
