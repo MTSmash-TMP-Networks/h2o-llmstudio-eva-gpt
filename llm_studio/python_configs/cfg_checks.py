@@ -4,6 +4,7 @@ import os
 import torch
 
 from llm_studio.app_utils.config import default_cfg
+from llm_studio.app_utils.huggingface_parquet import limit_parquet_directory_reads
 from llm_studio.python_configs.base import DefaultConfigProblemBase
 from llm_studio.src.utils.export_utils import get_size_str
 from llm_studio.src.utils.v100_precision import (
@@ -33,7 +34,14 @@ def check_config_for_errors(cfg: DefaultConfigProblemBase) -> dict:
     """
     errors = check_for_common_errors(cfg)
     logging_errors = check_for_logging_errors(cfg)
-    problem_type_errors = cfg.check()
+
+    # The Run Experiment request must never materialize a multi-gigabyte sharded
+    # Hugging Face dataset merely to validate its schema/content. The Parquet
+    # directory reader can fetch a bounded head directly from Arrow, so use that
+    # path for config sanity checks. Regular CSV/Parquet files are unchanged.
+    with limit_parquet_directory_reads(max_rows=2000):
+        problem_type_errors = cfg.check()
+
     errors["title"].extend(problem_type_errors["title"])
     errors["message"].extend(problem_type_errors["message"])
     errors["type"].extend(problem_type_errors["type"])
