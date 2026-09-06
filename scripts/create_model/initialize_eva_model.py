@@ -34,8 +34,7 @@ def _normalize_tokenizer_config(out_dir: str) -> None:
     if cfg.get("tokenizer_class") == "TokenizersBackend":
         cfg["tokenizer_class"] = "PreTrainedTokenizerFast"
     elif (
-        not cfg.get("tokenizer_class")
-        and (Path(out_dir) / "tokenizer.json").is_file()
+        not cfg.get("tokenizer_class") and (Path(out_dir) / "tokenizer.json").is_file()
     ):
         cfg["tokenizer_class"] = "PreTrainedTokenizerFast"
 
