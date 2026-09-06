@@ -68,14 +68,11 @@ def _localized_experiment_elements(
             not in text_mode._EXPERIMENT_TEXT_ONLY_HIDDEN_FIELDS
         ]
     else:
-        text_mode._apply_experiment_chat_values(
-            q, mixed=mode == text_mode._MIXED_MODE
-        )
+        text_mode._apply_experiment_chat_values(q, mixed=mode == text_mode._MIXED_MODE)
         items = [
             item
             for item in items
-            if getattr(item, "name", None)
-            != "experiment/start/cfg/train_text_column"
+            if getattr(item, "name", None) != "experiment/start/cfg/train_text_column"
         ]
 
     controls = text_mode._experiment_mode_controls(q, mode, columns)
