@@ -179,7 +179,9 @@ def _mode_controls(q: Q, mode: str, columns: list[str]) -> list[Any]:
                     required=True,
                     trigger=True,
                     choices=[ui.choice(column, column) for column in columns],
-                    tooltip="Every non-empty row in this column is trained as raw text.",
+                    tooltip=(
+                        "Every non-empty row in this column is trained as raw text."
+                    ),
                 ),
                 ui.message_bar(
                     type="info",
