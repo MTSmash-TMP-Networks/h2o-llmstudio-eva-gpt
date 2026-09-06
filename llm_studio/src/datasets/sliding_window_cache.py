@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-_CACHE_VERSION = 2
+_CACHE_VERSION = 3
+_PREPARTITIONED_MARKER = "_llm_studio_rank_partitioned_parquet"
 
 
 def get_cache_path(dataset: Any, strategy: str) -> Path | None:
@@ -47,6 +49,86 @@ def get_cache_path(dataset: Any, strategy: str) -> Path | None:
         logger.warning("Sample-index cache is unavailable at %s: %s", root, exception)
         return None
     return root / f"long-sample-index-{_cache_key(dataset, strategy)}.npy"
+
+
+def _file_signature(path: str | os.PathLike[str]) -> dict[str, Any]:
+    resolved = Path(path).expanduser().resolve()
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return {"path": str(resolved), "size": None, "mtime_ns": None}
+    return {
+        "path": str(resolved),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+
+
+def _rank_source_signatures(path: Any, rank: int, world_size: int) -> list[dict[str, Any]]:
+    """Describe one rank's source files without reading their text payload."""
+    if path in (None, "", "None"):
+        return []
+
+    source = os.fspath(path)
+    try:
+        from llm_studio.app_utils.huggingface_parquet import (
+            is_parquet_directory,
+            list_parquet_shards,
+        )
+
+        if is_parquet_directory(source):
+            shards = list_parquet_shards(source)
+            if world_size > 1 and len(shards) >= world_size:
+                shards = shards[rank::world_size]
+            return [_file_signature(shard) for shard in shards]
+    except (ImportError, OSError, ValueError):
+        pass
+
+    return [_file_signature(source)]
+
+
+def _prepartitioned_source_fingerprint(dataset: Any) -> str | None:
+    """Build a stable cache identity for rank-partitioned Parquet training.
+
+    Hashing a DataFrame containing hundreds of thousands of long, mostly unique text
+    values can temporarily consume several gigabytes per distributed rank. The
+    sharded training path is deterministic, so source-file metadata plus the split
+    settings identifies the rank-local row selection without touching every article.
+    """
+    if not bool(dataset.df.attrs.get(_PREPARTITIONED_MARKER, False)):
+        return None
+
+    cfg = dataset.cfg
+    environment = getattr(cfg, "environment", None)
+    rank = int(getattr(environment, "_local_rank", 0) or 0)
+    world_size = max(int(getattr(environment, "_world_size", 1) or 1), 1)
+    train_path = getattr(cfg.dataset, "train_dataframe", "")
+    validation_path = getattr(cfg.dataset, "validation_dataframe", "")
+
+    payload = {
+        "rank": rank,
+        "world_size": world_size,
+        "train_sources": _rank_source_signatures(train_path, rank, world_size),
+        "validation_sources": _rank_source_signatures(
+            validation_path, rank, world_size
+        ),
+        "row_count": int(len(dataset.df)),
+        "validation_strategy": getattr(
+            cfg.dataset, "validation_strategy", "automatic"
+        ),
+        "validation_size": float(getattr(cfg.dataset, "validation_size", 0.0) or 0.0),
+        "data_sample": float(getattr(cfg.dataset, "data_sample", 1.0) or 1.0),
+        "data_sample_choice": list(
+            getattr(cfg.dataset, "data_sample_choice", ("Train", "Validation"))
+        ),
+        "train_validation_data": bool(
+            getattr(getattr(cfg, "training", None), "train_validation_data", False)
+        ),
+        "selection_version": 2,
+    }
+    return hashlib.blake2b(
+        json.dumps(payload, sort_keys=True, default=str).encode(), digest_size=20
+    ).hexdigest()
 
 
 def _cache_key(dataset: Any, strategy: str) -> str:
@@ -93,6 +175,18 @@ def _cache_key(dataset: Any, strategy: str) -> str:
     }
     digest = hashlib.blake2b(digest_size=20)
     digest.update(json.dumps(settings, sort_keys=True, default=str).encode())
+
+    source_fingerprint = _prepartitioned_source_fingerprint(dataset)
+    if source_fingerprint is not None:
+        logger.info(
+            "Using lightweight sharded source fingerprint for the long-sample "
+            "cache (%s rows); full DataFrame text hashing is skipped.",
+            len(dataset.df),
+        )
+        digest.update(b"rank-partitioned:")
+        digest.update(source_fingerprint.encode())
+        return digest.hexdigest()
+
     try:
         row_hash = pd.util.hash_pandas_object(
             dataset.df, index=True, categorize=True
@@ -139,17 +233,19 @@ def load_index(
         return None
 
 
-def save_index(path: Path | None, index: list[tuple[int, int | None, int]]) -> None:
-    """Atomically save a sample index."""
+def save_index(
+    path: Path | None, index: Sequence[tuple[int, int | None, int]]
+) -> None:
+    """Atomically save a sample index without duplicating it as a Python list."""
     if path is None:
         return
-    values = np.asarray(
-        [
-            (original_idx, -1 if window_start is None else window_start, prefix_mask)
-            for original_idx, window_start, prefix_mask in index
-        ],
-        dtype=np.int64,
-    ).reshape((-1, 3))
+
+    values = np.empty((len(index), 3), dtype=np.int64)
+    for row, (original_idx, window_start, prefix_mask) in enumerate(index):
+        values[row, 0] = int(original_idx)
+        values[row, 1] = -1 if window_start is None else int(window_start)
+        values[row, 2] = int(prefix_mask)
+
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         with temporary.open("wb") as cache_file:
