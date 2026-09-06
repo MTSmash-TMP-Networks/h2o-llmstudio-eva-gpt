@@ -73,6 +73,9 @@ if __name__ == "__main__":
     import torch
 
     from llm_studio.src.utils.config_utils import load_config_yaml
+    from llm_studio.src.utils.dense_local_model_repair import (
+        repair_stale_dense_eva_quantization_config,
+    )
     from llm_studio.src.utils.exceptions import (
         LLMAugmentationsException,
         LLMDataException,
@@ -81,6 +84,9 @@ if __name__ == "__main__":
         LLMTrainingException,
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
+    from llm_studio.src.utils.large_text_arrow_memory import (
+        install_large_text_arrow_memory,
+    )
     from llm_studio.src.utils.large_text_deepspeed_runtime import (
         install_large_text_deepspeed_runtime,
     )
@@ -96,12 +102,24 @@ if __name__ == "__main__":
     # This preserves logical column aliases such as source `text` -> trainer `Text`.
     install_sharded_parquet_training_support()
 
+    # Keep the multi-million-row raw text corpus in Arrow buffers. Without this,
+    # to_pandas()/astype(str) creates hundreds of thousands of Python string objects
+    # per rank before the model is even loaded.
+    install_large_text_arrow_memory()
+
     # Large rank-partitioned text corpora must keep their already prepared loader
     # instead of letting DeepSpeed repartition/fork it again. Install this before
     # train.py imports the runtime helpers so the low-memory wrappers are captured.
     install_large_text_deepspeed_runtime()
 
+    from llm_studio.src.utils.dense_backbone_low_memory import (
+        install_dense_backbone_low_memory,
+    )
     from llm_studio.train import run
+
+    # Importing train.py installs the existing V100/DeepSpeed precision wrapper.
+    # Extend that wrapper afterwards with Transformers low_cpu_mem_usage.
+    install_dense_backbone_low_memory()
 
     cfg = load_config_yaml(parser_args.yaml)
 
@@ -109,6 +127,11 @@ if __name__ == "__main__":
     # config.json omitted Hugging Face's model_type discriminator. Repair this
     # before either AutoTokenizer or AutoConfig sees the local backbone path.
     ensure_local_eva_model_type(cfg.llm_backbone)
+
+    # Older dense FP32 models created from a pretrained base config could retain
+    # that base model's MXFP4 metadata even though their safetensors are dense. On
+    # V100 this makes Transformers dequantize every rank to BF16 during startup.
+    repair_stale_dense_eva_quantization_config(cfg.llm_backbone)
 
     flag_path = os.path.join(cfg.output_directory, "flags{}.json")
 
