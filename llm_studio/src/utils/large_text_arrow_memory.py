@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from typing import Any, Callable
 
 import pandas as pd
+import pyarrow as pa
 import pyarrow.dataset as pa_dataset
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,32 @@ class _ArrowTextSequence(Sequence[str]):
         return "" if pd.isna(value) else str(value)
 
 
+def _promote_string_columns_to_large(table: pa.Table) -> tuple[pa.Table, list[str]]:
+    """Promote Arrow string columns to 64-bit offsets before pandas indexing.
+
+    Arrow's regular ``string`` type stores offsets as signed 32-bit integers. A rank
+    that owns more than roughly 2 GiB of UTF-8 payload can still be read as chunked
+    arrays, but a later pandas/sklearn ``take`` may concatenate selected chunks into
+    one array and overflow those offsets. ``large_string`` keeps the same UTF-8
+    values while using 64-bit offsets, so deterministic train/validation indexing
+    remains safe for multi-gigabyte rank-local corpora.
+    """
+    promoted: list[str] = []
+    for column_index, field in enumerate(table.schema):
+        if not pa.types.is_string(field.type):
+            continue
+        large_field = pa.field(
+            field.name,
+            pa.large_string(),
+            nullable=field.nullable,
+            metadata=field.metadata,
+        )
+        large_column = table.column(column_index).cast(pa.large_string())
+        table = table.set_column(column_index, large_field, large_column)
+        promoted.append(field.name)
+    return table, promoted
+
+
 def _read_rank_partitioned_dataframe_arrow(
     path: str, rank: int, world_size: int
 ) -> pd.DataFrame:
@@ -89,6 +116,15 @@ def _read_rank_partitioned_dataframe_arrow(
         len(all_shards),
     )
     table = dataset.to_table(columns=columns)
+    table, promoted_columns = _promote_string_columns_to_large(table)
+    if promoted_columns:
+        logger.info(
+            "Rank %s/%s promoted Arrow string columns %s to large_string so "
+            "multi-GB train/validation indexing uses 64-bit offsets.",
+            rank,
+            world_size,
+            promoted_columns,
+        )
     try:
         df = table.to_pandas(types_mapper=pd.ArrowDtype).reset_index(drop=True)
     except (TypeError, AttributeError):
