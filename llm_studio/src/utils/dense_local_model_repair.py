@@ -18,6 +18,7 @@ _QUANTIZED_KEY_MARKERS = (
     "quant_state",
     "weight_scale",
 )
+_MAX_SAFETENSOR_HEADER_BYTES = 128 * 1024 * 1024
 
 
 def _quantization_method(config: dict[str, Any]) -> str:
@@ -28,34 +29,48 @@ def _quantization_method(config: dict[str, Any]) -> str:
     return str(method).strip().lower()
 
 
+def _read_safetensor_header(weight_file: Path) -> dict[str, Any] | None:
+    """Read only the JSON header; never map or materialize tensor payload bytes."""
+    try:
+        with weight_file.open("rb") as tensor_file:
+            header_size_bytes = tensor_file.read(8)
+            if len(header_size_bytes) != 8:
+                return None
+            header_size = int.from_bytes(header_size_bytes, byteorder="little", signed=False)
+            if header_size <= 0 or header_size > _MAX_SAFETENSOR_HEADER_BYTES:
+                return None
+            header = json.loads(tensor_file.read(header_size).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return header if isinstance(header, dict) else None
+
+
 def _looks_like_dense_safetensors(model_path: str) -> bool:
-    """Inspect safetensor metadata without materializing the model weights."""
+    """Inspect safetensor headers without materializing the model weights."""
     model_dir = Path(model_path)
     weight_files = sorted(model_dir.glob("*.safetensors"))
     if not weight_files:
         return False
 
-    try:
-        from safetensors import safe_open
-    except ImportError:
-        return False
-
     weight_count = 0
-    try:
-        for weight_file in weight_files:
-            with safe_open(weight_file, framework="pt", device="cpu") as tensors:
-                for key in tensors.keys():
-                    lowered_key = key.lower()
-                    if any(marker in lowered_key for marker in _QUANTIZED_KEY_MARKERS):
-                        return False
-                    if not lowered_key.endswith(".weight"):
-                        continue
-                    dtype = str(tensors.get_slice(key).get_dtype()).upper()
-                    if dtype not in _DENSE_FLOAT_DTYPES:
-                        return False
-                    weight_count += 1
-    except (OSError, RuntimeError, ValueError):
-        return False
+    for weight_file in weight_files:
+        header = _read_safetensor_header(weight_file)
+        if header is None:
+            return False
+        for key, tensor_metadata in header.items():
+            if key == "__metadata__":
+                continue
+            lowered_key = key.lower()
+            if any(marker in lowered_key for marker in _QUANTIZED_KEY_MARKERS):
+                return False
+            if not lowered_key.endswith(".weight"):
+                continue
+            if not isinstance(tensor_metadata, dict):
+                return False
+            dtype = str(tensor_metadata.get("dtype", "")).upper()
+            if dtype not in _DENSE_FLOAT_DTYPES:
+                return False
+            weight_count += 1
 
     return weight_count > 0
 
@@ -77,9 +92,9 @@ def repair_stale_dense_eva_quantization_config(model_path: str) -> bool:
 
     Older MaTeLiX model creation runs could start from a Hugging Face base config,
     inherit its ``quantization_config``, then instantiate a new model, convert it to
-    FP32 and save dense safetensors.  The stale MXFP4 marker later makes Transformers
+    FP32 and save dense safetensors. The stale MXFP4 marker later makes Transformers
     attempt an unnecessary MXFP4 -> BF16 dequantization during every distributed
-    rank startup.  On V100 systems that creates a large host-RAM spike before
+    rank startup. On V100 systems that creates a large host-RAM spike before
     DeepSpeed can take ownership of the model.
 
     The repair is deliberately conservative: it only applies to local EvaGPT-looking
