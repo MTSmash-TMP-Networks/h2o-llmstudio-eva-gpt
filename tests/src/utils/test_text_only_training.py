@@ -2,6 +2,9 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from llm_studio.app_utils.experiment_training_mode_fix import (
+    _insert_after_dataset_separator,
+)
 from llm_studio.app_utils.huggingface_import import (
     _detect_huggingface_columns,
     _prepare_fallback_dataset_for_text_training,
@@ -65,6 +68,30 @@ def test_explicit_training_mode_is_derived_from_persisted_dataset_fields():
     assert _training_mode_from_values(True, ("instruction",), "output") == "mixed"
     assert _training_mode_from_values(True, ("Text",), "Text") == "text_only"
     assert _training_mode_from_values(True, "content", "content") == "text_only"
+
+
+def test_experiment_controls_are_inserted_only_after_dataset_separator():
+    items = [
+        SimpleNamespace(name="general_expander"),
+        SimpleNamespace(name="dataset_expander"),
+        SimpleNamespace(name="experiment/start/cfg/train_dataframe"),
+        SimpleNamespace(name="training_expander"),
+    ]
+    controls = [
+        SimpleNamespace(name="experiment/start/training_mode"),
+        SimpleNamespace(name="experiment/start/text_column"),
+    ]
+
+    result = _insert_after_dataset_separator(items, controls)
+
+    assert [item.name for item in result] == [
+        "general_expander",
+        "dataset_expander",
+        "experiment/start/training_mode",
+        "experiment/start/text_column",
+        "experiment/start/cfg/train_dataframe",
+        "training_expander",
+    ]
 
 
 def test_preferred_text_column_prioritizes_common_corpus_names():
