@@ -38,9 +38,7 @@ def _compute_sharded_statistics(dataset_path: str, cfg_path: str) -> dict:
             [len(text.split(" ")) for text in conversation[chat_type]]
             for conversation in conversations
         ]
-        stats_dict[chat_type] = [
-            item for sublist in text_lengths for item in sublist
-        ]
+        stats_dict[chat_type] = [item for sublist in text_lengths for item in sublist]
 
     input_texts = []
     for conversation in conversations:
