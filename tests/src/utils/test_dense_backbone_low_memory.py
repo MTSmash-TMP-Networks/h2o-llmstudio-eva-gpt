@@ -19,7 +19,9 @@ def test_runtime_proxy_enables_low_cpu_mem_usage(monkeypatch):
 
         return RuntimeClass
 
-    monkeypatch.setattr(v100_precision, "_dtype_overridden_model_class", fake_dtype_factory)
+    monkeypatch.setattr(
+        v100_precision, "_dtype_overridden_model_class", fake_dtype_factory
+    )
     monkeypatch.setattr(dense_backbone_low_memory, "_INSTALLED", False)
 
     dense_backbone_low_memory.install_dense_backbone_low_memory()
