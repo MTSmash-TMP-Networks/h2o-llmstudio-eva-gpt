@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 _ORIGINAL_DATASET_IMPORT = None
 _PATCH_INSTALLED = False
 
+_HF_COLUMNS_KEY = "dataset/import/huggingface_columns"
+_HF_SCHEMA_KEY = "dataset/import/huggingface_schema"
+_HF_TEXT_COLUMN_KEY = "dataset/import/huggingface_text_column"
+_HF_NO_TEXT_COLUMN = "__none__"
+
 
 def _clean_optional_value(value: object) -> str | None:
     if value is None:
@@ -36,6 +41,62 @@ def _clean_optional_value(value: object) -> str | None:
 def _safe_filename_part(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._")
     return value or "dataset"
+
+
+def _preferred_text_column(columns: list[str]) -> str | None:
+    """Choose a sensible default while still letting the user override it."""
+    for candidate in (
+        "Text",
+        "text",
+        "content",
+        "Content",
+        "document",
+        "Document",
+        "body",
+        "Body",
+    ):
+        if candidate in columns:
+            return candidate
+    return columns[0] if len(columns) == 1 else None
+
+
+def _schema_fingerprint(dataset_name: str, config: str | None, split: str) -> str:
+    return "|".join((dataset_name.strip(), config or "", split.strip() or "train"))
+
+
+def _selected_text_column(q: Q) -> str | None:
+    selected = _clean_optional_value(q.client[_HF_TEXT_COLUMN_KEY])
+    if selected in (None, _HF_NO_TEXT_COLUMN):
+        return None
+    return selected
+
+
+def _detect_huggingface_columns(
+    dataset_name: str,
+    config: str | None,
+    split: str,
+    token: str | None,
+) -> list[str]:
+    """Read only Hugging Face dataset metadata/schema, not the full dataset."""
+    load_kwargs = {
+        "split": split,
+        "token": token,
+        "streaming": True,
+    }
+    if config is None:
+        dataset = load_dataset(dataset_name, **load_kwargs)
+    else:
+        dataset = load_dataset(dataset_name, config, **load_kwargs)
+
+    columns = getattr(dataset, "column_names", None)
+    if columns:
+        return [str(column) for column in columns]
+
+    features = getattr(dataset, "features", None)
+    if features:
+        return [str(column) for column in features.keys()]
+
+    return []
 
 
 def _find_native_parquet_files(
@@ -69,6 +130,7 @@ def _download_native_parquet_dataset(
     token: str | None,
     repo_files: list[str],
     target_dir: str,
+    text_column: str | None = None,
 ) -> None:
     """Download existing HF Parquet shards without rebuilding the full dataset."""
     for repo_file in repo_files:
@@ -88,14 +150,34 @@ def _download_native_parquet_dataset(
         "files": repo_files,
     }
 
-    # Wikimedia Wikipedia is already a clean continued-pretraining corpus. Expose
-    # only its article body and map it to LLM Studio's raw-text column. This avoids
-    # accidentally selecting id/url/title as supervised prompt/answer columns.
-    if dataset_name == "wikimedia/wikipedia":
-        metadata["columns"] = ["text"]
-        metadata["column_aliases"] = {"text": "Text"}
+    if text_column is not None:
+        # A selected Hugging Face source column becomes the trainer's canonical
+        # raw-text column. Only that column is exposed to avoid accidental use of
+        # id/title/url metadata as chat prompt or answer fields.
+        metadata["columns"] = [text_column]
+        metadata["column_aliases"] = {text_column: "Text"}
+        metadata["source_text_column"] = text_column
+        metadata["training_mode"] = "text_only"
 
     write_parquet_directory_metadata(target_dir, metadata)
+
+
+def _prepare_fallback_dataset_for_text_training(dataset, text_column: str | None):
+    """Project a regular HF dataset to the selected text column when requested."""
+    if text_column is None:
+        return dataset
+
+    columns = [str(column) for column in getattr(dataset, "column_names", [])]
+    if text_column not in columns:
+        raise ValueError(
+            f"Selected text column '{text_column}' is not present in the dataset. "
+            f"Available columns: {columns}"
+        )
+
+    dataset = dataset.select_columns([text_column])
+    if text_column != "Text":
+        dataset = dataset.rename_column(text_column, "Text")
+    return dataset
 
 
 async def huggingface_download_with_config(
@@ -119,6 +201,7 @@ async def huggingface_download_with_config(
     token = _clean_optional_value(q.client["dataset/import/huggingface_api_token"])
     config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
     split = _clean_optional_value(huggingface_split) or "train"
+    text_column = _selected_text_column(q)
 
     filename_parts = [huggingface_dataset.split("/")[-1]]
     if config is not None:
@@ -167,6 +250,7 @@ async def huggingface_download_with_config(
             token=token,
             repo_files=native_parquet_files,
             target_dir=dataset_path,
+            text_column=text_column,
         )
         return huggingface_path, filename
 
@@ -181,9 +265,66 @@ async def huggingface_download_with_config(
     else:
         dataset = load_dataset(huggingface_dataset, config, **load_kwargs)
 
+    dataset = _prepare_fallback_dataset_for_text_training(dataset, text_column)
     dataset_path = os.path.join(huggingface_path, f"{filename}.pq")
     dataset.to_parquet(dataset_path)
     return huggingface_path, filename
+
+
+def _current_huggingface_schema(q: Q) -> tuple[str, list[str]]:
+    dataset_name = _clean_optional_value(q.client["dataset/import/huggingface_dataset"])
+    config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
+    split = (
+        _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    )
+    if dataset_name is None:
+        return "", []
+
+    fingerprint = _schema_fingerprint(dataset_name, config, split)
+    if q.client[_HF_SCHEMA_KEY] != fingerprint:
+        return fingerprint, []
+
+    columns = q.client[_HF_COLUMNS_KEY]
+    if isinstance(columns, (list, tuple)):
+        return fingerprint, [str(column) for column in columns]
+    return fingerprint, []
+
+
+async def _inspect_huggingface_columns(q: Q) -> list[str]:
+    dataset_name = _clean_optional_value(q.client["dataset/import/huggingface_dataset"])
+    config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
+    split = (
+        _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    )
+    token = _clean_optional_value(q.client["dataset/import/huggingface_api_token"])
+
+    if dataset_name is None:
+        raise ValueError("Please provide a Hugging Face dataset first.")
+
+    await busy_dialog(
+        q=q,
+        title="Inspecting Hugging Face dataset",
+        text="Reading dataset schema and available columns without downloading it...",
+    )
+    columns = _detect_huggingface_columns(
+        dataset_name=dataset_name,
+        config=config,
+        split=split,
+        token=token,
+    )
+    if not columns:
+        raise ValueError("No dataset columns could be detected.")
+
+    fingerprint = _schema_fingerprint(dataset_name, config, split)
+    q.client[_HF_SCHEMA_KEY] = fingerprint
+    q.client[_HF_COLUMNS_KEY] = columns
+
+    selected = _clean_optional_value(q.client[_HF_TEXT_COLUMN_KEY])
+    if selected not in columns:
+        selected = _preferred_text_column(columns)
+        q.client[_HF_TEXT_COLUMN_KEY] = selected or _HF_NO_TEXT_COLUMN
+
+    return columns
 
 
 async def _render_huggingface_import_form(
@@ -212,6 +353,10 @@ async def _render_huggingface_import_form(
         ]
     if q.client["dataset/import/huggingface_config"] is None:
         q.client["dataset/import/huggingface_config"] = ""
+    if q.client[_HF_TEXT_COLUMN_KEY] is None:
+        q.client[_HF_TEXT_COLUMN_KEY] = _HF_NO_TEXT_COLUMN
+
+    _, detected_columns = _current_huggingface_schema(q)
 
     import_choices = [
         ui.choice("Upload", "Upload"),
@@ -270,6 +415,49 @@ async def _render_huggingface_import_form(
         ),
     ]
 
+    if detected_columns:
+        text_choices = [
+            ui.choice(_HF_NO_TEXT_COLUMN, "Do not select a text column")
+        ] + [ui.choice(column, column) for column in detected_columns]
+        selected = _clean_optional_value(q.client[_HF_TEXT_COLUMN_KEY])
+        if selected not in detected_columns and selected != _HF_NO_TEXT_COLUMN:
+            selected = _preferred_text_column(detected_columns) or _HF_NO_TEXT_COLUMN
+            q.client[_HF_TEXT_COLUMN_KEY] = selected
+
+        items.extend(
+            [
+                ui.dropdown(
+                    name=_HF_TEXT_COLUMN_KEY,
+                    label="Text column",
+                    value=selected or _HF_NO_TEXT_COLUMN,
+                    choices=text_choices,
+                    required=True,
+                    tooltip=(
+                        "Select the source column to train as raw text. The chosen "
+                        "column is imported as the trainer's canonical 'Text' column."
+                    ),
+                ),
+                ui.message_bar(
+                    type="info",
+                    text=(
+                        "Detected columns: " + ", ".join(detected_columns) + ". "
+                        "Choose the text column, then click Continue again to import."
+                    ),
+                ),
+            ]
+        )
+    else:
+        items.append(
+            ui.message_bar(
+                type="info",
+                text=(
+                    "Click Continue to inspect the dataset schema first. The trainer "
+                    "will then show a Text column dropdown before downloading the "
+                    "full dataset."
+                ),
+            )
+        )
+
     allowed_types = ", ".join(default_cfg.allowed_file_extensions)
     allowed_types = " or".join(allowed_types.rsplit(",", 1))
     items += [
@@ -291,9 +479,7 @@ async def _render_huggingface_import_form(
         items=[
             ui.inline(
                 items=[
-                    ui.button(
-                        name="dataset/import/2", label="Continue", primary=True
-                    ),
+                    ui.button(name="dataset/import/2", label="Continue", primary=True),
                     ui.button(name="dataset/list", label="Abort"),
                 ],
                 justify="start",
@@ -350,6 +536,71 @@ async def dataset_import_with_huggingface_config(
             info=info,
         )
         return
+
+    # Hugging Face import is intentionally two-stage. The first Continue reads only
+    # the remote schema and returns to the same form with a real Text column
+    # dropdown. The second Continue performs the potentially large download.
+    if step == 2 and q.client["dataset/import/source"] == "Huggingface":
+        current_schema, detected_columns = _current_huggingface_schema(q)
+        if not detected_columns:
+            try:
+                detected_columns = await _inspect_huggingface_columns(q)
+            except Exception as exc:
+                logger.exception("Failed to inspect Hugging Face dataset columns")
+                await _render_huggingface_import_form(q=q, error=str(exc))
+                return
+
+            await _render_huggingface_import_form(
+                q=q,
+                info=(
+                    "Dataset schema loaded. Select the Text column below before "
+                    "starting the download. "
+                ),
+            )
+            return
+
+        dataset_name = _clean_optional_value(
+            q.client["dataset/import/huggingface_dataset"]
+        )
+        config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
+        split = (
+            _clean_optional_value(q.client["dataset/import/huggingface_split"])
+            or "train"
+        )
+        expected_schema = (
+            _schema_fingerprint(dataset_name, config, split) if dataset_name else ""
+        )
+        if current_schema != expected_schema:
+            q.client[_HF_COLUMNS_KEY] = None
+            q.client[_HF_SCHEMA_KEY] = None
+            await _render_huggingface_import_form(
+                q=q,
+                warning=(
+                    "Dataset, config or split changed. Click Continue to detect the "
+                    "columns for the new selection."
+                ),
+            )
+            return
+
+        selected_text_column = _selected_text_column(q)
+        if (
+            selected_text_column is not None
+            and selected_text_column not in detected_columns
+        ):
+            await _render_huggingface_import_form(
+                q=q,
+                error=(
+                    f"Text column '{selected_text_column}' is not available. "
+                    f"Choose one of: {', '.join(detected_columns)}"
+                ),
+            )
+            return
+
+        if selected_text_column is not None:
+            # Keep the import and the later Configure Dataset screen in sync. The
+            # imported physical/logical dataset exposes the chosen source as `Text`.
+            q.client["dataset/import/training_mode"] = "text_only"
+            q.client["dataset/import/text_column"] = "Text"
 
     # Import preview/sanity checks need only a representative sample. Training later
     # still reads the complete logical dataframe.
