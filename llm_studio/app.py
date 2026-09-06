@@ -8,6 +8,9 @@ os.environ["MKL_THREADING_LAYER"] = "GNU"
 
 from h2o_wave import Q, app, copy_expando, main, ui  # noqa: F401
 
+from llm_studio.app_utils.experiment_training_mode_fix import (
+    install_experiment_training_mode_fix,
+)
 from llm_studio.app_utils.handlers import handle
 from llm_studio.app_utils.huggingface_import import install_huggingface_import_extension
 from llm_studio.app_utils.huggingface_parquet import install_parquet_directory_support
@@ -18,6 +21,7 @@ from llm_studio.app_utils.text_only_training import install_text_only_training_m
 install_parquet_directory_support()
 install_huggingface_import_extension()
 handle = install_text_only_training_mode(handle)
+install_experiment_training_mode_fix()
 
 logger = logging.getLogger(__name__)
 
