@@ -112,7 +112,9 @@ def _rank_partition_shards(path: str, rank: int, world_size: int) -> list[str]:
     if world_size <= 0:
         raise ValueError("world_size must be positive")
     if rank < 0 or rank >= world_size:
-        raise ValueError(f"Invalid distributed rank {rank} for world size {world_size}.")
+        raise ValueError(
+            f"Invalid distributed rank {rank} for world size {world_size}."
+        )
     if len(shards) < world_size:
         raise ValueError(
             "Sharded text-only training needs at least one Parquet shard per GPU. "
@@ -247,9 +249,7 @@ def _prepare_rank_partitioned_data(cfg: Any) -> tuple[pd.DataFrame, pd.DataFrame
 
         train_df = local_df
         if is_parquet_directory(validation_path):
-            val_df = _read_rank_partitioned_dataframe(
-                validation_path, rank, world_size
-            )
+            val_df = _read_rank_partitioned_dataframe(validation_path, rank, world_size)
         else:
             val_df = _ORIGINAL_READ_DATAFRAME(validation_path)
         if text_column in val_df.columns:
