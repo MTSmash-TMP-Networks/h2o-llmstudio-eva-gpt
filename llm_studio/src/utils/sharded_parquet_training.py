@@ -142,7 +142,8 @@ def _read_rank_partitioned_dataframe(
         columns = [column for column in columns if column in available_columns]
         if not columns:
             raise ValueError(
-                f"Configured columns are not present in Parquet dataset directory {path}."
+                "Configured columns are not present in Parquet dataset directory "
+                f"{path}."
             )
 
     logger.info(
