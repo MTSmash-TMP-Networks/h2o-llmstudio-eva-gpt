@@ -418,7 +418,9 @@ def _get_ui_elements_for_cfg_with_training_mode(
 
     if mode == _TEXT_MODE:
         text_column = q.client[_EXPERIMENT_TEXT_COLUMN_KEY]
-        persisted_prompt = _single_column(q.client["experiment/start/cfg/prompt_column"])
+        persisted_prompt = _single_column(
+            q.client["experiment/start/cfg/prompt_column"]
+        )
         if text_column not in columns:
             if persisted_prompt in columns:
                 text_column = persisted_prompt
@@ -435,8 +437,7 @@ def _get_ui_elements_for_cfg_with_training_mode(
         items = [
             item
             for item in items
-            if getattr(item, "name", None)
-            != "experiment/start/cfg/train_text_column"
+            if getattr(item, "name", None) != "experiment/start/cfg/train_text_column"
         ]
 
     return _experiment_mode_controls(q, mode, columns) + items
@@ -540,7 +541,9 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
     app_utils.get_dataset_elements = _get_dataset_elements_with_training_mode
     dataset_section.get_dataset_elements = _get_dataset_elements_with_training_mode
     app_utils.get_ui_elements_for_cfg = _get_ui_elements_for_cfg_with_training_mode
-    experiment_section.get_ui_elements_for_cfg = _get_ui_elements_for_cfg_with_training_mode
+    experiment_section.get_ui_elements_for_cfg = (
+        _get_ui_elements_for_cfg_with_training_mode
+    )
     chain_module.get_plain_text_mask = _plain_text_mask_with_text_only
     chain_module._configured_text_columns = _configured_text_columns_with_text_only
     chain_module.ConversationChainHandler.__init__ = _handler_init_with_text_only
