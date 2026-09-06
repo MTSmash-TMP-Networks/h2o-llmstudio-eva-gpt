@@ -62,6 +62,16 @@ def _normalize_model_config(out_dir: str, model_type: str) -> None:
         cfg_file.write("\n")
 
 
+def _remove_inherited_quantization_metadata(cfg) -> None:
+    """A newly initialized dense model must not inherit base-model quantization."""
+    for attribute in ("quantization_config", "_pre_quantization_dtype"):
+        if hasattr(cfg, attribute):
+            try:
+                delattr(cfg, attribute)
+            except AttributeError:
+                setattr(cfg, attribute, None)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--tokenizer-src", default="./tokenizer_fast")
@@ -94,6 +104,12 @@ def main() -> None:
         if args.base_model
         else AutoConfig.for_model("eva_gpt")
     )
+    # ``--base-model`` is only a configuration source here. The model below is newly
+    # initialized and explicitly saved as dense FP32, so carrying a base model's
+    # MXFP4/other quantization marker into config.json is incorrect and later causes
+    # Transformers to dequantize a model that was never saved quantized.
+    _remove_inherited_quantization_metadata(cfg)
+
     cfg.vocab_size = len(tok)
     cfg.hidden_size = args.hidden_size
     cfg.intermediate_size = args.intermediate_size
