@@ -16,8 +16,12 @@ _MIXED_MODE = "mixed"
 _CHAT_MODE = "chat"
 _MODE_KEY = "dataset/import/training_mode"
 _TEXT_COLUMN_KEY = "dataset/import/text_column"
+_EXPERIMENT_MODE_KEY = "experiment/start/training_mode"
+_EXPERIMENT_TEXT_COLUMN_KEY = "experiment/start/text_column"
+_EXPERIMENT_DATASET_KEY = "experiment/start/training_mode_dataset"
 
 _ORIGINAL_GET_DATASET_ELEMENTS = None
+_ORIGINAL_GET_UI_ELEMENTS_FOR_CFG = None
 _ORIGINAL_GET_PLAIN_TEXT_MASK = None
 _ORIGINAL_CONFIGURED_TEXT_COLUMNS = None
 _ORIGINAL_HANDLER_INIT = None
@@ -31,6 +35,26 @@ _CHAT_DATASET_FIELDS = {
     "dataset/import/cfg/parent_id_column",
     "dataset/import/cfg/id_column",
     "dataset/import/cfg/train_text_column",
+}
+
+_EXPERIMENT_TEXT_ONLY_HIDDEN_FIELDS = {
+    "experiment/start/cfg/train_text_column",
+    "experiment/start/cfg/system_column",
+    "experiment/start/cfg/prompt_column",
+    "experiment/start/cfg/prompt_column_separator",
+    "experiment/start/cfg/answer_column",
+    "experiment/start/cfg/parent_id_column",
+    "experiment/start/cfg/id_column",
+    "experiment/start/cfg/text_system_start",
+    "experiment/start/cfg/text_prompt_start",
+    "experiment/start/cfg/text_answer_separator",
+    "experiment/start/cfg/add_eos_token_to_system",
+    "experiment/start/cfg/add_eos_token_to_prompt",
+    "experiment/start/cfg/add_eos_token_to_answer",
+    "experiment/start/cfg/limit_chained_samples",
+    "experiment/start/cfg/mask_prompt_labels",
+    "experiment/start/cfg/mask_prompt_user_text_only",
+    "experiment/start/cfg/only_last_answer",
 }
 
 
@@ -63,8 +87,32 @@ def get_text_only_column(cfg: Any) -> str | None:
     return _single_column(getattr(dataset, "prompt_column", None))
 
 
+def _training_mode_from_values(
+    train_text_column: Any,
+    prompt_column: Any,
+    answer_column: Any,
+) -> str:
+    """Translate persisted dataset fields into the explicit GUI training mode."""
+    if not bool(train_text_column):
+        return _CHAT_MODE
+
+    prompt = _single_column(prompt_column)
+    answer = _single_column(answer_column)
+    if prompt is not None and answer is not None and prompt == answer:
+        return _TEXT_MODE
+
+    return _MIXED_MODE
+
+
 def _dataframe_columns(q: Q) -> list[str]:
     dataframe = q.client["dataset/import/cfg/dataframe"]
+    if isinstance(dataframe, pd.DataFrame):
+        return [str(column) for column in dataframe.columns]
+    return []
+
+
+def _experiment_dataframe_columns(q: Q) -> list[str]:
+    dataframe = q.client["experiment/start/cfg/dataframe"]
     if isinstance(dataframe, pd.DataFrame):
         return [str(column) for column in dataframe.columns]
     return []
@@ -245,6 +293,155 @@ def _get_dataset_elements_with_training_mode(cfg: Any, q: Q) -> list[Any]:
     return _mode_controls(q, mode, columns) + items
 
 
+def _reset_experiment_mode_for_dataset(q: Q) -> None:
+    dataset_id = str(q.client["experiment/start/dataset"] or "")
+    if q.client[_EXPERIMENT_DATASET_KEY] == dataset_id:
+        return
+
+    q.client[_EXPERIMENT_DATASET_KEY] = dataset_id
+    q.client[_EXPERIMENT_MODE_KEY] = None
+    q.client[_EXPERIMENT_TEXT_COLUMN_KEY] = None
+
+
+def _infer_experiment_mode(q: Q) -> str:
+    current = q.client[_EXPERIMENT_MODE_KEY]
+    if current in (_CHAT_MODE, _MIXED_MODE, _TEXT_MODE):
+        return current
+
+    mode = _training_mode_from_values(
+        q.client["experiment/start/cfg/train_text_column"],
+        q.client["experiment/start/cfg/prompt_column"],
+        q.client["experiment/start/cfg/answer_column"],
+    )
+    q.client[_EXPERIMENT_MODE_KEY] = mode
+    return mode
+
+
+def _apply_experiment_text_only_values(q: Q, text_column: str) -> None:
+    q.client[_EXPERIMENT_MODE_KEY] = _TEXT_MODE
+    q.client[_EXPERIMENT_TEXT_COLUMN_KEY] = text_column
+    q.client["experiment/start/cfg/train_text_column"] = True
+    q.client["experiment/start/cfg/system_column"] = "None"
+    q.client["experiment/start/cfg/prompt_column"] = (text_column,)
+    q.client["experiment/start/cfg/answer_column"] = text_column
+    q.client["experiment/start/cfg/parent_id_column"] = "None"
+    q.client["experiment/start/cfg/id_column"] = "None"
+
+
+def _apply_experiment_chat_values(q: Q, *, mixed: bool) -> None:
+    q.client[_EXPERIMENT_MODE_KEY] = _MIXED_MODE if mixed else _CHAT_MODE
+    q.client["experiment/start/cfg/train_text_column"] = mixed
+
+
+def _experiment_mode_controls(q: Q, mode: str, columns: list[str]) -> list[Any]:
+    controls: list[Any] = [
+        ui.dropdown(
+            name=_EXPERIMENT_MODE_KEY,
+            label="Training mode",
+            value=mode,
+            required=True,
+            trigger=True,
+            choices=[
+                ui.choice(_CHAT_MODE, "Chat / instruction training"),
+                ui.choice(_MIXED_MODE, "Mixed chat + Text training"),
+                ui.choice(_TEXT_MODE, "Text only / continued pretraining"),
+            ],
+            tooltip=(
+                "Controls how the selected dataset is interpreted for this experiment. "
+                "Text only trains corpus text without applying the chat template."
+            ),
+        )
+    ]
+
+    if mode != _TEXT_MODE:
+        return controls
+
+    text_column = q.client[_EXPERIMENT_TEXT_COLUMN_KEY]
+    persisted_prompt = _single_column(q.client["experiment/start/cfg/prompt_column"])
+    if text_column not in columns:
+        if persisted_prompt in columns:
+            text_column = persisted_prompt
+        else:
+            text_column = _preferred_text_column(columns)
+        q.client[_EXPERIMENT_TEXT_COLUMN_KEY] = text_column
+
+    text_choices = list(columns)
+    if not text_choices:
+        text_choices = [text_column or "Text"]
+        text_column = text_choices[0]
+        q.client[_EXPERIMENT_TEXT_COLUMN_KEY] = text_column
+
+    controls.extend(
+        [
+            ui.dropdown(
+                name=_EXPERIMENT_TEXT_COLUMN_KEY,
+                label="Text column",
+                value=text_column,
+                required=True,
+                trigger=True,
+                choices=[ui.choice(column, column) for column in text_choices],
+                tooltip="Column whose non-empty rows are trained as raw text.",
+            ),
+            ui.message_bar(
+                type="info",
+                text=(
+                    "This experiment uses continued pretraining. The selected text "
+                    "column is trained directly; System, Prompt, Assistant, Parent "
+                    "ID and chat-template settings are not used."
+                ),
+            ),
+        ]
+    )
+    return controls
+
+
+def _get_ui_elements_for_cfg_with_training_mode(
+    cfg: Any,
+    q: Q,
+    limit: list[str] | None = None,
+    pre: str = "experiment/start",
+) -> list[Any]:
+    """Expose the explicit training mode inside Experiment > Dataset settings."""
+    if _ORIGINAL_GET_UI_ELEMENTS_FOR_CFG is None:
+        raise RuntimeError("Experiment training-mode extension is not installed.")
+
+    items = _ORIGINAL_GET_UI_ELEMENTS_FOR_CFG(cfg=cfg, q=q, limit=limit, pre=pre)
+
+    # The wrapper is also used recursively. Only intercept the causal-LM dataset
+    # dataclass; all other experiment config groups keep their original UI.
+    if pre != "experiment/start" or not hasattr(cfg, "train_text_column"):
+        return items
+
+    _reset_experiment_mode_for_dataset(q)
+    mode = _infer_experiment_mode(q)
+    columns = _experiment_dataframe_columns(q)
+
+    if mode == _TEXT_MODE:
+        text_column = q.client[_EXPERIMENT_TEXT_COLUMN_KEY]
+        persisted_prompt = _single_column(q.client["experiment/start/cfg/prompt_column"])
+        if text_column not in columns:
+            if persisted_prompt in columns:
+                text_column = persisted_prompt
+            else:
+                text_column = _preferred_text_column(columns)
+        _apply_experiment_text_only_values(q, text_column)
+        items = [
+            item
+            for item in items
+            if getattr(item, "name", None) not in _EXPERIMENT_TEXT_ONLY_HIDDEN_FIELDS
+        ]
+    else:
+        _apply_experiment_chat_values(q, mixed=mode == _MIXED_MODE)
+        items = [
+            item
+            for item in items
+            if getattr(item, "name", None)
+            != "experiment/start/cfg/train_text_column"
+        ]
+
+    return _experiment_mode_controls(q, mode, columns) + items
+
+
 def _configured_text_columns_with_text_only(cfg: Any) -> list[str]:
     if _ORIGINAL_CONFIGURED_TEXT_COLUMNS is None:
         return []
@@ -317,6 +514,7 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
     """Install GUI/runtime patches and return a wrapped Wave request handler."""
     global _INSTALLED
     global _ORIGINAL_GET_DATASET_ELEMENTS
+    global _ORIGINAL_GET_UI_ELEMENTS_FOR_CFG
     global _ORIGINAL_GET_PLAIN_TEXT_MASK
     global _ORIGINAL_CONFIGURED_TEXT_COLUMNS
     global _ORIGINAL_HANDLER_INIT
@@ -327,9 +525,11 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
 
     from llm_studio.app_utils import utils as app_utils
     from llm_studio.app_utils.sections import dataset as dataset_section
+    from llm_studio.app_utils.sections import experiment as experiment_section
     from llm_studio.src.datasets import conversation_chain_handler as chain_module
 
     _ORIGINAL_GET_DATASET_ELEMENTS = app_utils.get_dataset_elements
+    _ORIGINAL_GET_UI_ELEMENTS_FOR_CFG = app_utils.get_ui_elements_for_cfg
     _ORIGINAL_GET_PLAIN_TEXT_MASK = chain_module.get_plain_text_mask
     _ORIGINAL_CONFIGURED_TEXT_COLUMNS = chain_module._configured_text_columns
     _ORIGINAL_HANDLER_INIT = chain_module.ConversationChainHandler.__init__
@@ -339,6 +539,8 @@ def install_text_only_training_mode(handle: Callable[..., Any]) -> Callable[...,
 
     app_utils.get_dataset_elements = _get_dataset_elements_with_training_mode
     dataset_section.get_dataset_elements = _get_dataset_elements_with_training_mode
+    app_utils.get_ui_elements_for_cfg = _get_ui_elements_for_cfg_with_training_mode
+    experiment_section.get_ui_elements_for_cfg = _get_ui_elements_for_cfg_with_training_mode
     chain_module.get_plain_text_mask = _plain_text_mask_with_text_only
     chain_module._configured_text_columns = _configured_text_columns_with_text_only
     chain_module.ConversationChainHandler.__init__ = _handler_init_with_text_only
