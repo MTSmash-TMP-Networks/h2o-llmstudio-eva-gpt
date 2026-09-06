@@ -82,9 +82,7 @@ def ensure_local_eva_model_type(model_path: str) -> bool:
         return False
 
     config["model_type"] = _EVA_MODEL_TYPE
-    temporary_path = config_path.with_name(
-        f"{config_path.name}.tmp.{os.getpid()}"
-    )
+    temporary_path = config_path.with_name(f"{config_path.name}.tmp.{os.getpid()}")
     try:
         with temporary_path.open("w", encoding="utf-8") as config_file:
             json.dump(config, config_file, indent=2, ensure_ascii=False)
