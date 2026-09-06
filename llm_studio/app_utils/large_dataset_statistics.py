@@ -5,8 +5,6 @@ from __future__ import annotations
 import functools
 import logging
 
-from h2o_wave import ui
-
 from llm_studio.app_utils.huggingface_parquet import (
     is_parquet_directory,
     parquet_directory_row_count,
@@ -69,7 +67,7 @@ def _compute_sharded_statistics(dataset_path: str, cfg_path: str) -> dict:
 
 
 def install_large_dataset_statistics() -> None:
-    """Patch only the statistics tab for logical sharded Parquet datasets."""
+    """Patch statistics computation without replacing the Wave UI renderer."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -77,7 +75,6 @@ def install_large_dataset_statistics() -> None:
     from llm_studio.app_utils.sections import dataset as dataset_section
 
     original_compute = dataset_section.compute_dataset_statistics
-    original_show = dataset_section.show_statistics_tab
 
     @functools.lru_cache(maxsize=128)
     def compute_dataset_statistics(
@@ -87,27 +84,11 @@ def install_large_dataset_statistics() -> None:
             return _compute_sharded_statistics(dataset_path, cfg_path)
         return original_compute(dataset_path, cfg_path, cfg_hash)
 
-    async def show_statistics_tab(q, dataset_filename, config_filename):
-        await original_show(q, dataset_filename, config_filename)
-        if not is_parquet_directory(dataset_filename):
-            return
-
-        total_rows = parquet_directory_row_count(dataset_filename)
-        sample_rows = min(total_rows, _STATISTICS_SAMPLE_ROWS)
-        card = q.page["dataset/display/statistics"]
-        card.items.insert(
-            0,
-            ui.message_bar(
-                type="info",
-                text=(
-                    "Large sharded dataset: statistics are calculated from a "
-                    f"representative bounded sample of {sample_rows:,} out of "
-                    f"{total_rows:,} rows so the UI does not load the complete corpus "
-                    "into memory."
-                ),
-            ),
-        )
-
+    # Keep H2O Wave's original show_statistics_tab implementation untouched. Page
+    # card attributes are Wave Ref proxies after assignment to q.page; mutating
+    # ``q.page[...].items`` as if it were a normal Python list raises
+    # ``TypeError: 'Ref' object is not callable``. The original renderer already
+    # calls the module-level compute_dataset_statistics symbol, so replacing only
+    # that function is sufficient to keep large datasets bounded and responsive.
     dataset_section.compute_dataset_statistics = compute_dataset_statistics
-    dataset_section.show_statistics_tab = show_statistics_tab
     _INSTALLED = True
