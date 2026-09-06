@@ -105,7 +105,9 @@ def test_fallback_huggingface_dataset_projects_selected_text_column():
             return self
 
         def rename_column(self, source, target):
-            self.column_names = [target if value == source else value for value in self.column_names]
+            self.column_names = [
+                target if value == source else value for value in self.column_names
+            ]
             return self
 
     dataset = _prepare_fallback_dataset_for_text_training(FakeDataset(), "body")
