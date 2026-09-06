@@ -81,6 +81,9 @@ if __name__ == "__main__":
         LLMTrainingException,
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
+    from llm_studio.src.utils.large_text_deepspeed_runtime import (
+        install_large_text_deepspeed_runtime,
+    )
     from llm_studio.src.utils.local_model_utils import ensure_local_eva_model_type
     from llm_studio.src.utils.logging_utils import initialize_logging, write_flag
     from llm_studio.src.utils.sharded_parquet_training import (
@@ -92,6 +95,11 @@ if __name__ == "__main__":
     # launched as a separate Python process, so install the core reader here too.
     # This preserves logical column aliases such as source `text` -> trainer `Text`.
     install_sharded_parquet_training_support()
+
+    # Large rank-partitioned text corpora must keep their already prepared loader
+    # instead of letting DeepSpeed repartition/fork it again. Install this before
+    # train.py imports the runtime helpers so the low-memory wrappers are captured.
+    install_large_text_deepspeed_runtime()
 
     from llm_studio.train import run
 
