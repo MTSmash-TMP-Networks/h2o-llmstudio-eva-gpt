@@ -15,6 +15,9 @@ from llm_studio.app_utils.handlers import handle
 from llm_studio.app_utils.huggingface_import import install_huggingface_import_extension
 from llm_studio.app_utils.huggingface_parquet import install_parquet_directory_support
 from llm_studio.app_utils.initializers import initialize_app, initialize_client
+from llm_studio.app_utils.large_dataset_statistics import (
+    install_large_dataset_statistics,
+)
 from llm_studio.app_utils.sections.common import heap_redact, interface
 from llm_studio.app_utils.text_only_training import install_text_only_training_mode
 
@@ -22,6 +25,7 @@ install_parquet_directory_support()
 install_huggingface_import_extension()
 handle = install_text_only_training_mode(handle)
 install_experiment_training_mode_fix()
+install_large_dataset_statistics()
 
 logger = logging.getLogger(__name__)
 

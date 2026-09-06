@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
@@ -14,8 +15,81 @@ PLAIN_TEXT_PROMPT = "__LLM_STUDIO_PLAIN_TEXT_SAMPLE__"
 AUXILIARY_TEXT_COLUMNS = ("Kontext", "context")
 
 
+class _SingletonConversationChains(Sequence[list[int]]):
+    """Represent ``[[0], [1], ...]`` without allocating one list per text row."""
+
+    def __init__(self, size: int):
+        self.size = int(size)
+
+    def __len__(self) -> int:
+        return self.size
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self.size)
+            return [[position] for position in range(start, stop, step)]
+
+        position = int(index)
+        if position < 0:
+            position += self.size
+        if position < 0 or position >= self.size:
+            raise IndexError(index)
+        return [position]
+
+
+class _ConstantTextSequence(Sequence[str]):
+    """Represent a repeated prompt/system string without a giant Python list."""
+
+    def __init__(self, value: str, size: int):
+        self.value = value
+        self.size = int(size)
+
+    def __len__(self) -> int:
+        return self.size
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self.size)
+            return [self.value for _ in range(start, stop, step)]
+
+        position = int(index)
+        if position < 0:
+            position += self.size
+        if position < 0 or position >= self.size:
+            raise IndexError(index)
+        return self.value
+
+
 def text_column_training_enabled(cfg) -> bool:
     return bool(getattr(cfg.dataset, "train_text_column", True))
+
+
+def _single_column(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)) and len(value) == 1:
+        return str(value[0])
+    return None
+
+
+def get_pure_text_training_column(df: pd.DataFrame, cfg) -> str | None:
+    """Return the persisted Text-only column when no chat chaining is involved."""
+    if not text_column_training_enabled(cfg):
+        return None
+
+    prompt_column = _single_column(getattr(cfg.dataset, "prompt_column", None))
+    answer_column = _single_column(getattr(cfg.dataset, "answer_column", None))
+    if prompt_column is None or prompt_column != answer_column:
+        return None
+    if prompt_column not in df.columns:
+        return None
+
+    parent_id_column = getattr(cfg.dataset, "parent_id_column", "None")
+    system_column = getattr(cfg.dataset, "system_column", "None")
+    if parent_id_column not in ("None", None) or system_column not in ("None", None):
+        return None
+
+    return prompt_column
 
 
 def _configured_text_columns(cfg) -> list[str]:
@@ -64,13 +138,17 @@ def get_plain_text_mask(df: pd.DataFrame, cfg) -> pd.Series:
 
 def prepare_plain_text_rows_for_chaining(df: pd.DataFrame, cfg) -> pd.DataFrame:
     """Give raw Text rows unique IDs so they do not collapse into one chain."""
+    parent_id_column = getattr(cfg.dataset, "parent_id_column", "None")
+    if parent_id_column in ("None", None):
+        # No chain can collapse when every row is already an independent sample.
+        return df
+
     plain_text_mask = get_plain_text_mask(df, cfg)
     if not plain_text_mask.any():
         return df
 
     df = df.copy()
     id_column = getattr(cfg.dataset, "id_column", "id")
-    parent_id_column = getattr(cfg.dataset, "parent_id_column", "None")
 
     if id_column not in df.columns:
         df[id_column] = np.arange(len(df), dtype=object)
@@ -130,7 +208,9 @@ def _patch_plain_text_custom_dataset() -> None:
         )
 
     dataset_cls._get_prompt_encoding_and_mask = _get_prompt_encoding_and_mask
-    dataset_cls._get_input_ids_labels_and_encodings = _get_input_ids_labels_and_encodings
+    dataset_cls._get_input_ids_labels_and_encodings = (
+        _get_input_ids_labels_and_encodings
+    )
     dataset_cls._plain_text_patch_applied = True
 
 
@@ -181,6 +261,30 @@ class ConversationChainHandler:
     ):
         # Do not set self.cfg = cfg, as ConversationChainHandler
         # will be used with PatchedAttribute context manager.
+        pure_text_column = get_pure_text_training_column(df, cfg)
+        if pure_text_column is not None:
+            text_values = clean_missing_text_values(df[pure_text_column])
+            non_empty_mask = text_values.str.strip() != ""
+            if bool(non_empty_mask.all()):
+                sample_count = len(df)
+                self.plain_text_mask = pd.Series(True, index=df.index, dtype=bool)
+                self.conversation_chain_ids = _SingletonConversationChains(sample_count)
+                self.prompts = _ConstantTextSequence(PLAIN_TEXT_PROMPT, sample_count)
+                self.answers = text_values.to_numpy(copy=False)
+                self.systems = _ConstantTextSequence("", sample_count)
+                _patch_plain_text_custom_dataset()
+                logger.info(
+                    "Prepared optimized text-only conversation handler for %s rows "
+                    "without materializing chat chains.",
+                    sample_count,
+                )
+                return
+
+            logger.info(
+                "Text-only fast path skipped because %s rows contain empty text.",
+                int((~non_empty_mask).sum()),
+            )
+
         self.plain_text_mask = get_plain_text_mask(df, cfg)
         self.conversation_chain_ids = self.get_conversation_chain_ids(cfg, df)
         self.prompts = get_texts(df, cfg)
