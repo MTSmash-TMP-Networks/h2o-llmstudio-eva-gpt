@@ -274,7 +274,9 @@ async def huggingface_download_with_config(
 def _current_huggingface_schema(q: Q) -> tuple[str, list[str]]:
     dataset_name = _clean_optional_value(q.client["dataset/import/huggingface_dataset"])
     config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
-    split = _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    split = (
+        _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    )
     if dataset_name is None:
         return "", []
 
@@ -291,7 +293,9 @@ def _current_huggingface_schema(q: Q) -> tuple[str, list[str]]:
 async def _inspect_huggingface_columns(q: Q) -> list[str]:
     dataset_name = _clean_optional_value(q.client["dataset/import/huggingface_dataset"])
     config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
-    split = _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    split = (
+        _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+    )
     token = _clean_optional_value(q.client["dataset/import/huggingface_api_token"])
 
     if dataset_name is None:
@@ -316,7 +320,7 @@ async def _inspect_huggingface_columns(q: Q) -> list[str]:
     q.client[_HF_COLUMNS_KEY] = columns
 
     selected = _clean_optional_value(q.client[_HF_TEXT_COLUMN_KEY])
-    if selected not in columns and selected != _HF_NO_TEXT_COLUMN:
+    if selected not in columns:
         selected = _preferred_text_column(columns)
         q.client[_HF_TEXT_COLUMN_KEY] = selected or _HF_NO_TEXT_COLUMN
 
@@ -475,9 +479,7 @@ async def _render_huggingface_import_form(
         items=[
             ui.inline(
                 items=[
-                    ui.button(
-                        name="dataset/import/2", label="Continue", primary=True
-                    ),
+                    ui.button(name="dataset/import/2", label="Continue", primary=True),
                     ui.button(name="dataset/list", label="Abort"),
                 ],
                 justify="start",
@@ -557,9 +559,14 @@ async def dataset_import_with_huggingface_config(
             )
             return
 
-        dataset_name = _clean_optional_value(q.client["dataset/import/huggingface_dataset"])
+        dataset_name = _clean_optional_value(
+            q.client["dataset/import/huggingface_dataset"]
+        )
         config = _clean_optional_value(q.client["dataset/import/huggingface_config"])
-        split = _clean_optional_value(q.client["dataset/import/huggingface_split"]) or "train"
+        split = (
+            _clean_optional_value(q.client["dataset/import/huggingface_split"])
+            or "train"
+        )
         expected_schema = (
             _schema_fingerprint(dataset_name, config, split) if dataset_name else ""
         )
@@ -576,7 +583,10 @@ async def dataset_import_with_huggingface_config(
             return
 
         selected_text_column = _selected_text_column(q)
-        if selected_text_column is not None and selected_text_column not in detected_columns:
+        if (
+            selected_text_column is not None
+            and selected_text_column not in detected_columns
+        ):
             await _render_huggingface_import_form(
                 q=q,
                 error=(
