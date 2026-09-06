@@ -222,9 +222,7 @@ def test_prepartitioned_dataloader_disables_second_distributed_sampler(monkeypat
     )
     train_ds = SimpleNamespace()
     setattr(train_ds, sharded_training._PREPARTITIONED_MARKER, True)
-    cfg = SimpleNamespace(
-        environment=SimpleNamespace(_distributed=True, _local_rank=2)
-    )
+    cfg = SimpleNamespace(environment=SimpleNamespace(_distributed=True, _local_rank=2))
 
     result = sharded_training._get_train_dataloader_with_rank_partitioning(
         train_ds, cfg
