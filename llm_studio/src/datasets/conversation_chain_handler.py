@@ -208,7 +208,9 @@ def _patch_plain_text_custom_dataset() -> None:
         )
 
     dataset_cls._get_prompt_encoding_and_mask = _get_prompt_encoding_and_mask
-    dataset_cls._get_input_ids_labels_and_encodings = _get_input_ids_labels_and_encodings
+    dataset_cls._get_input_ids_labels_and_encodings = (
+        _get_input_ids_labels_and_encodings
+    )
     dataset_cls._plain_text_patch_applied = True
 
 
