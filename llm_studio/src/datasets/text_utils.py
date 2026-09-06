@@ -7,6 +7,7 @@ from pandas import DataFrame, Series
 from transformers import AutoTokenizer
 
 from llm_studio.python_configs.base import DefaultConfigProblemBase
+from llm_studio.src.utils.local_model_utils import ensure_local_eva_model_type
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,12 @@ def get_texts(df: DataFrame, cfg: DefaultConfigProblemBase):
 
 
 def get_tokenizer(cfg: DefaultConfigProblemBase):
+    # Older local EvaGPT models created by MaTeLiX AI Studio may have a complete
+    # tokenizer but miss Hugging Face's model_type discriminator in config.json.
+    # Repair that metadata before AutoTokenizer asks AutoConfig to identify the
+    # local directory. Remote model ids and unrelated local models are untouched.
+    ensure_local_eva_model_type(cfg.llm_backbone)
+
     kwargs = dict(
         revision=cfg.environment.huggingface_branch,
         trust_remote_code=cfg.environment.trust_remote_code,
