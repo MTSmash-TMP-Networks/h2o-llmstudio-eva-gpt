@@ -44,7 +44,7 @@ def check_for_done(process_queue):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="")
     parser.add_argument(
-        "-Y", "--yaml", help="yaml filename", type=(str), default=argparse.SUPPRESS
+        "-Y", "--yaml", help="config filename", type=(str), default=argparse.SUPPRESS
     )
     parser.add_argument(
         "-Q",
@@ -87,6 +87,9 @@ if __name__ == "__main__":
         LLMTrainingException,
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
+    from llm_studio.src.utils.large_chat_deepspeed_runtime import (
+        install_large_chat_deepspeed_runtime,
+    )
     from llm_studio.src.utils.large_text_arrow_memory import (
         install_large_text_arrow_memory,
     )
@@ -114,6 +117,11 @@ if __name__ == "__main__":
     # instead of letting DeepSpeed repartition/fork it again. Install this before
     # train.py imports the runtime helpers so the low-memory wrappers are captured.
     install_large_text_deepspeed_runtime()
+
+    # Large normal CSV/chat datasets are also fully resident in every DDP rank.
+    # Preserve H2O's existing DistributedSampler/DataLoader and disable worker forks
+    # when the in-memory corpus is large enough to put host RAM under pressure.
+    install_large_chat_deepspeed_runtime()
 
     # Sliding Window can still truncate an auxiliary answer_* helper field even
     # though the real training window is already bounded. Keep that legacy helper
