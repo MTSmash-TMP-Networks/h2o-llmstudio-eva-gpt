@@ -78,6 +78,7 @@ jobs:
             tests/src/utils/test_text_only_training.py \
             tests/src/utils/test_sharded_parquet_training.py \
             tests/src/utils/test_large_text_deepspeed_runtime.py \
+            tests/src/utils/test_large_chat_deepspeed_runtime.py \
             tests/src/utils/test_large_text_arrow_memory.py \
             tests/src/utils/test_dense_local_model_repair.py \
             tests/src/utils/test_dense_backbone_low_memory.py \
