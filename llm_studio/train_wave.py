@@ -76,6 +76,9 @@ if __name__ == "__main__":
     from llm_studio.src.utils.dense_local_model_repair import (
         repair_stale_dense_eva_quantization_config,
     )
+    from llm_studio.src.utils.early_stop_runtime_cleanup import (
+        install_early_stop_runtime_cleanup,
+    )
     from llm_studio.src.utils.exceptions import (
         LLMAugmentationsException,
         LLMDataException,
@@ -111,6 +114,11 @@ if __name__ == "__main__":
     # instead of letting DeepSpeed repartition/fork it again. Install this before
     # train.py imports the runtime helpers so the low-memory wrappers are captured.
     install_large_text_deepspeed_runtime()
+
+    # Sliding Window can still truncate an auxiliary answer_* helper field even
+    # though the real training window is already bounded. Keep that legacy helper
+    # behavior quiet, and skip empty prediction ZIPs after Early Stop.
+    install_early_stop_runtime_cleanup()
 
     from llm_studio.src.utils.dense_backbone_low_memory import (
         install_dense_backbone_low_memory,
