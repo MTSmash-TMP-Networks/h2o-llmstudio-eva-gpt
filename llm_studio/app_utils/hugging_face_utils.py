@@ -231,7 +231,7 @@ def publish_model_to_hugging_face(
         huggingface_hub.login(api_key)
 
     # If 'user_id' argument is blank, fetch 'user_id' from the logged-in user
-    if user_id == "":
+    if not user_id:
         user_id = huggingface_hub.whoami()["name"]
 
     repo_id = f"{user_id}/{hf_repo_friendly_name(model_name)}"
@@ -300,10 +300,10 @@ def publish_model_to_hugging_face(
         push_kwargs["safe_serialization"] = safe_serialization
     model.backbone.push_to_hub(**push_kwargs)
 
-    # Storing HF attributes
-    output_directory = cfg.output_directory
+    # Store HF attributes alongside the experiment that was actually published.
+    # cfg.output_directory may be stale when an older config was reused or renamed.
     save_hf_yaml(
-        path=f"{output_directory.rstrip('/')}/hf.yaml",
+        path=os.path.join(path_to_experiment, "hf.yaml"),
         account_name=user_id,
         model_name=model_name,
         repo_id=repo_id,
