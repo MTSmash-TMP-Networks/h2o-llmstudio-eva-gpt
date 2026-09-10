@@ -241,11 +241,11 @@ def wave_utils_error_card(
         + "\n```"
     )
 
+    q.app.wave_utils_error_str = str(error)
     type_, value_, traceback_ = sys.exc_info()
     if type_ is not None:
         stack_trace = traceback.format_exception(type_, value_, traceback_)
         q.app.wave_utils_stack_trace_str = "### stacktrace\n" + "\n".join(stack_trace)
-        q.app.wave_utils_error_str = str(error)
     elif not q.app.wave_utils_stack_trace_str:
         q.app.wave_utils_stack_trace_str = "### stacktrace\nNo traceback available."
 
