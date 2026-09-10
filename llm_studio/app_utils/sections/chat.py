@@ -131,7 +131,7 @@ async def chat_tab(q: Q, load_model=True):
             icon="Lightbulb",
         ),
     ]
-    if validation_texts:
+    if len(validation_texts) > 0:
         suggestions.append(
             ui.chat_suggestion(
                 np.random.choice(validation_texts),
