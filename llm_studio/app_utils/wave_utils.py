@@ -242,10 +242,14 @@ def wave_utils_error_card(
     )
 
     type_, value_, traceback_ = sys.exc_info()
-    stack_trace = traceback.format_exception(type_, value_, traceback_)
-    git_version = subprocess.getoutput("git rev-parse HEAD")
-    if not q.app.wave_utils_stack_trace_str:
+    if type_ is not None:
+        stack_trace = traceback.format_exception(type_, value_, traceback_)
         q.app.wave_utils_stack_trace_str = "### stacktrace\n" + "\n".join(stack_trace)
+        q.app.wave_utils_error_str = str(error)
+    elif not q.app.wave_utils_stack_trace_str:
+        q.app.wave_utils_stack_trace_str = "### stacktrace\nNo traceback available."
+
+    git_version = subprocess.getoutput("git rev-parse HEAD")
 
     card = ui.form_card(
         box=box,
