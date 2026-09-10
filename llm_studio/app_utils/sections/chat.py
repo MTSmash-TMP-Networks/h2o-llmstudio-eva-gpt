@@ -68,29 +68,42 @@ async def chat_tab(q: Q, load_model=True):
         assert q.client["experiment/display/chat/tokenizer"] is not None
         initial_message = "Chat History cleaned. How can I help you?"
 
-    # Load validation dataframe and texts
-    validation_dataframe = get_prediction_dataframe(cfg.output_directory)
-    if cfg.dataset.parent_id_column != "None":
-        # sample and parent ids can have any dtype, such as str, int, float, etc.
-        # id column can be int, while parent_id column can be float
-        # (as some values are NaN) so we cast id to the same dtype
-        sample_ids = (
-            validation_dataframe["id"]
-            .astype(validation_dataframe[cfg.dataset.parent_id_column].dtype)
-            .tolist()
+    # Load validation dataframe and texts. The selected experiment path is authoritative:
+    # cfg.output_directory can still point to an older experiment when a config was reused.
+    validation_texts = []
+    experiment_path = q.client["experiment/display/experiment_path"]
+    validation_predictions_path = os.path.join(
+        experiment_path, "validation_predictions.csv"
+    )
+    if os.path.isfile(validation_predictions_path):
+        validation_dataframe = get_prediction_dataframe(experiment_path)
+        if cfg.dataset.parent_id_column != "None":
+            # sample and parent ids can have any dtype, such as str, int, float, etc.
+            # id column can be int, while parent_id column can be float
+            # (as some values are NaN) so we cast id to the same dtype
+            sample_ids = (
+                validation_dataframe["id"]
+                .astype(validation_dataframe[cfg.dataset.parent_id_column].dtype)
+                .tolist()
+            )
+            parent_ids = validation_dataframe[cfg.dataset.parent_id_column].tolist()
+
+            sample_ids_set = set(sample_ids)
+            is_seed_prompt = [
+                False if idx in sample_ids_set else True for idx in parent_ids
+            ]
+            validation_dataframe["is_seed_prompt"] = is_seed_prompt
+
+            validation_dataframe = validation_dataframe.loc[
+                validation_dataframe["is_seed_prompt"]
+            ]
+        validation_texts = get_texts(validation_dataframe, cfg)
+    else:
+        logger.warning(
+            "validation_predictions.csv not found for experiment %s. "
+            "Chat will start without validation sample suggestions.",
+            experiment_path,
         )
-        parent_ids = validation_dataframe[cfg.dataset.parent_id_column].tolist()
-
-        sample_ids_set = set(sample_ids)
-        is_seed_prompt = [
-            False if idx in sample_ids_set else True for idx in parent_ids
-        ]
-        validation_dataframe["is_seed_prompt"] = is_seed_prompt
-
-        validation_dataframe = validation_dataframe.loc[
-            validation_dataframe["is_seed_prompt"]
-        ]
-    validation_texts = get_texts(validation_dataframe, cfg)
 
     # Hide fields that are should not be visible in the UI
     cfg.prediction._visibility["metric"] = -1
@@ -98,37 +111,42 @@ async def chat_tab(q: Q, load_model=True):
     cfg.prediction._visibility["min_length_inference"] = -1
     cfg.prediction._visibility["stop_tokens"] = -1
 
+    suggestions = [
+        ui.chat_suggestion(
+            "Write a poem about MaTeLiX AI Studio",
+            label="Write a poem",
+            caption="about MaTeLiX AI Studio",
+            icon="Edit",
+        ),
+        ui.chat_suggestion(
+            "Plan a trip to Europe",
+            label="Plan a trip",
+            caption="to Europe",
+            icon="Airplane",
+        ),
+        ui.chat_suggestion(
+            "Give me ideas for a new project",
+            label="Give me ideas",
+            caption="for a new project",
+            icon="Lightbulb",
+        ),
+    ]
+    if validation_texts:
+        suggestions.append(
+            ui.chat_suggestion(
+                np.random.choice(validation_texts),
+                label="Random sample from validation set",
+                icon="Chat",
+            )
+        )
+
     logger.info(torch.cuda.memory_allocated())
     q.page["experiment/display/chat"] = ui.chatbot_card(
         box="first",
         data=chat_data(fields="content from_user", t="list"),  # type: ignore
         name="experiment/display/chat/chatbot",
         events=["stop", "suggestion"],
-        suggestions=[
-            ui.chat_suggestion(
-                "Write a poem about MaTeLiX AI Studio",
-                label="Write a poem",
-                caption="about MaTeLiX AI Studio",
-                icon="Edit",
-            ),
-            ui.chat_suggestion(
-                "Plan a trip to Europe",
-                label="Plan a trip",
-                caption="to Europe",
-                icon="Airplane",
-            ),
-            ui.chat_suggestion(
-                "Give me ideas for a new project",
-                label="Give me ideas",
-                caption="for a new project",
-                icon="Lightbulb",
-            ),
-            ui.chat_suggestion(
-                np.random.choice(validation_texts),
-                label="Random sample from validation set",
-                icon="Chat",
-            ),
-        ],
+        suggestions=suggestions,
     )
     q.page["experiment/display/chat"].data += [initial_message, False]
 
