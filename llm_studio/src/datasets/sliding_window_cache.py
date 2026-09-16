@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -14,8 +15,11 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 _PREPARTITIONED_MARKER = "_llm_studio_rank_partitioned_parquet"
+_LARGE_DISTRIBUTED_ROWS = 100_000
+_SHARED_CACHE_WAIT_SECONDS = 2 * 60 * 60
+_SHARED_CACHE_POLL_SECONDS = 0.25
 
 
 def get_cache_path(dataset: Any, strategy: str) -> Path | None:
@@ -48,7 +52,10 @@ def get_cache_path(dataset: Any, strategy: str) -> Path | None:
     except OSError as exception:
         logger.warning("Sample-index cache is unavailable at %s: %s", root, exception)
         return None
-    return root / f"long-sample-index-{_cache_key(dataset, strategy)}.npy"
+
+    path = root / f"long-sample-index-{_cache_key(dataset, strategy)}.npy"
+    _wait_for_rank_zero_cache(dataset, path)
+    return path
 
 
 def _file_signature(path: str | os.PathLike[str]) -> dict[str, Any]:
@@ -87,6 +94,64 @@ def _rank_source_signatures(
         pass
 
     return [_file_signature(source)]
+
+
+def _distributed_environment(dataset: Any) -> tuple[bool, int, int]:
+    environment = getattr(getattr(dataset, "cfg", None), "environment", None)
+    distributed = bool(getattr(environment, "_distributed", False))
+    rank = int(getattr(environment, "_local_rank", 0) or 0)
+    world_size = max(int(getattr(environment, "_world_size", 1) or 1), 1)
+    return distributed, rank, world_size
+
+
+def _is_large_shared_cache_candidate(dataset: Any) -> bool:
+    """Return True when all DDP ranks own the same large in-memory DataFrame."""
+    if bool(dataset.df.attrs.get(_PREPARTITIONED_MARKER, False)):
+        return False
+    distributed, _, world_size = _distributed_environment(dataset)
+    if not distributed or world_size <= 1:
+        return False
+    return len(dataset.df) >= _LARGE_DISTRIBUTED_ROWS
+
+
+def _sample_row_fingerprint(dataset: Any) -> str:
+    """Fingerprint a few split rows without hashing every large text cell."""
+    if len(dataset.df) == 0:
+        return "empty"
+
+    cfg = dataset.cfg
+    candidate_columns: list[str] = []
+    for value in (
+        getattr(cfg.dataset, "id_column", None),
+        getattr(cfg.dataset, "parent_id_column", None),
+        getattr(cfg.dataset, "system_column", None),
+        getattr(cfg.dataset, "prompt_column", None),
+        getattr(cfg.dataset, "answer_column", None),
+    ):
+        if isinstance(value, (list, tuple)):
+            candidate_columns.extend(str(item) for item in value)
+        elif value not in (None, "", "None"):
+            candidate_columns.append(str(value))
+
+    columns = [
+        column
+        for column in dict.fromkeys(candidate_columns)
+        if column in dataset.df.columns
+    ]
+    if not columns:
+        columns = list(dataset.df.columns[: min(3, len(dataset.df.columns))])
+
+    positions = sorted({0, len(dataset.df) // 2, len(dataset.df) - 1})
+    digest = hashlib.blake2b(digest_size=20)
+    for position in positions:
+        row = dataset.df.iloc[position]
+        digest.update(str(position).encode())
+        for column in columns:
+            digest.update(column.encode())
+            digest.update(b"\0")
+            digest.update(str(row[column]).encode("utf-8", errors="replace"))
+            digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def _prepartitioned_source_fingerprint(dataset: Any) -> str | None:
@@ -129,6 +194,86 @@ def _prepartitioned_source_fingerprint(dataset: Any) -> str | None:
     return hashlib.blake2b(
         json.dumps(payload, sort_keys=True, default=str).encode(), digest_size=20
     ).hexdigest()
+
+
+def _large_distributed_source_fingerprint(dataset: Any) -> str | None:
+    """Identify a large replicated DDP split without hashing its full text payload."""
+    if not _is_large_shared_cache_candidate(dataset):
+        return None
+
+    cfg = dataset.cfg
+    train_path = getattr(cfg.dataset, "train_dataframe", "")
+    validation_path = getattr(cfg.dataset, "validation_dataframe", "")
+    payload = {
+        # Non-partitioned chat DataFrames are identical on every DDP rank. Do not put
+        # rank/world-size into this fingerprint so every rank resolves the same path.
+        "mode": str(getattr(dataset, "mode", "")),
+        "train_sources": _rank_source_signatures(train_path, 0, 1),
+        "validation_sources": _rank_source_signatures(validation_path, 0, 1),
+        "row_count": int(len(dataset.df)),
+        "row_sample": _sample_row_fingerprint(dataset),
+        "validation_strategy": getattr(cfg.dataset, "validation_strategy", "automatic"),
+        "validation_size": float(getattr(cfg.dataset, "validation_size", 0.0) or 0.0),
+        "data_sample": float(getattr(cfg.dataset, "data_sample", 1.0) or 1.0),
+        "data_sample_choice": list(
+            getattr(cfg.dataset, "data_sample_choice", ("Train", "Validation"))
+        ),
+        "train_validation_data": bool(
+            getattr(getattr(cfg, "training", None), "train_validation_data", False)
+        ),
+        "selection_version": 1,
+    }
+    return hashlib.blake2b(
+        json.dumps(payload, sort_keys=True, default=str).encode(), digest_size=20
+    ).hexdigest()
+
+
+def _wait_for_rank_zero_cache(dataset: Any, path: Path) -> None:
+    """Let rank 0 build a shared index once instead of repeating it on every GPU."""
+    if not _is_large_shared_cache_candidate(dataset) or path.is_file():
+        return
+
+    _, rank, world_size = _distributed_environment(dataset)
+    if rank == 0:
+        return
+
+    try:
+        timeout_seconds = float(
+            os.getenv(
+                "H2O_LLM_STUDIO_SHARED_INDEX_WAIT_SECONDS",
+                str(_SHARED_CACHE_WAIT_SECONDS),
+            )
+        )
+    except ValueError:
+        timeout_seconds = float(_SHARED_CACHE_WAIT_SECONDS)
+    timeout_seconds = max(timeout_seconds, 0.0)
+
+    logger.info(
+        "Rank %s/%s waiting for rank 0 to build the shared long-sample index at %s.",
+        rank,
+        world_size,
+        path,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while not path.is_file() and time.monotonic() < deadline:
+        time.sleep(_SHARED_CACHE_POLL_SECONDS)
+
+    if path.is_file():
+        logger.info(
+            "Rank %s/%s found the shared long-sample index built by rank 0.",
+            rank,
+            world_size,
+        )
+        return
+
+    logger.warning(
+        "Rank %s/%s timed out after %.0fs waiting for rank 0 to build %s. "
+        "This rank will fall back to building the index itself.",
+        rank,
+        world_size,
+        timeout_seconds,
+        path,
+    )
 
 
 def _cache_key(dataset: Any, strategy: str) -> str:
@@ -184,6 +329,21 @@ def _cache_key(dataset: Any, strategy: str) -> str:
             len(dataset.df),
         )
         digest.update(b"rank-partitioned:")
+        digest.update(source_fingerprint.encode())
+        return digest.hexdigest()
+
+    source_fingerprint = _large_distributed_source_fingerprint(dataset)
+    if source_fingerprint is not None:
+        _, rank, world_size = _distributed_environment(dataset)
+        if rank == 0:
+            logger.info(
+                "Using lightweight shared source fingerprint for %s replicated "
+                "distributed rows across %s ranks; full DataFrame text hashing is "
+                "skipped and rank 0 owns index construction.",
+                len(dataset.df),
+                world_size,
+            )
+        digest.update(b"large-distributed-shared:")
         digest.update(source_fingerprint.encode())
         return digest.hexdigest()
 

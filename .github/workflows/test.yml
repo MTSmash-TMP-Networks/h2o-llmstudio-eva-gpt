@@ -61,6 +61,7 @@ jobs:
             --junitxml=reports/junit.xml \
             --html=reports/pytest.html \
             tests/src/datasets/test_fast_sliding_window.py \
+            tests/src/datasets/test_large_distributed_sliding_window_cache.py \
             tests/src/datasets/test_fast_sliding_window_import.py \
             tests/src/datasets/test_structure_aware_sliding_window.py \
             tests/src/datasets/test_supervised_sliding_window.py \
