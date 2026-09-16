@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Callable
 
 import deepspeed
@@ -17,6 +18,7 @@ _LARGE_PROCESS_RSS_BYTES = 4 * 1024 * 1024 * 1024
 _INSTALLED = False
 _ORIGINAL_GET_TRAIN_DATALOADER: Callable[..., Any] | None = None
 _ORIGINAL_GET_VAL_DATALOADER: Callable[..., Any] | None = None
+_ORIGINAL_LOAD_TRAIN_VALID_DATA: Callable[..., Any] | None = None
 _ORIGINAL_WRAP_MODEL_DISTRIBUTED: Callable[..., Any] | None = None
 
 
@@ -33,6 +35,52 @@ def _current_rss_bytes() -> int:
     except (OSError, ValueError, IndexError):
         pass
     return 0
+
+
+def _same_dataset_path(left: Any, right: Any) -> bool:
+    if left in (None, "", "None") or right in (None, "", "None"):
+        return False
+    try:
+        return os.path.abspath(os.fspath(left)) == os.path.abspath(os.fspath(right))
+    except TypeError:
+        return False
+
+
+def _load_train_valid_data_low_memory(cfg: Any):
+    """Avoid loading the same custom train/validation file twice.
+
+    A common large-chat setup points both fields at the same CSV. The normal path
+    materializes that file twice and, with ``train_validation_data=True``, can then
+    concatenate both full copies into a 2x training DataFrame. Reuse H2O's existing
+    automatic conversation-aware split instead; the temporary config change is
+    restored before returning.
+    """
+    if _ORIGINAL_LOAD_TRAIN_VALID_DATA is None:
+        raise RuntimeError("Original train/validation loader is unavailable.")
+
+    dataset_cfg = getattr(cfg, "dataset", None)
+    if dataset_cfg is None:
+        return _ORIGINAL_LOAD_TRAIN_VALID_DATA(cfg)
+
+    if (
+        getattr(dataset_cfg, "validation_strategy", None) == "custom"
+        and _same_dataset_path(
+            getattr(dataset_cfg, "train_dataframe", None),
+            getattr(dataset_cfg, "validation_dataframe", None),
+        )
+    ):
+        from llm_studio.src.utils.utils import PatchedAttribute
+
+        logger.warning(
+            "Training and custom validation point to the same dataset file. "
+            "Using one conversation-aware automatic split instead of loading the "
+            "full source twice. This prevents duplicate training rows and reduces "
+            "host RAM pressure."
+        )
+        with PatchedAttribute(dataset_cfg, "validation_strategy", "automatic"):
+            return _ORIGINAL_LOAD_TRAIN_VALID_DATA(cfg)
+
+    return _ORIGINAL_LOAD_TRAIN_VALID_DATA(cfg)
 
 
 def _is_target_deepspeed_chat(cfg: Any) -> bool:
@@ -210,6 +258,7 @@ def install_large_chat_deepspeed_runtime() -> None:
     global _INSTALLED
     global _ORIGINAL_GET_TRAIN_DATALOADER
     global _ORIGINAL_GET_VAL_DATALOADER
+    global _ORIGINAL_LOAD_TRAIN_VALID_DATA
     global _ORIGINAL_WRAP_MODEL_DISTRIBUTED
 
     if _INSTALLED:
@@ -219,8 +268,10 @@ def install_large_chat_deepspeed_runtime() -> None:
 
     _ORIGINAL_GET_TRAIN_DATALOADER = data_utils.get_train_dataloader
     _ORIGINAL_GET_VAL_DATALOADER = data_utils.get_val_dataloader
+    _ORIGINAL_LOAD_TRAIN_VALID_DATA = data_utils.load_train_valid_data
     _ORIGINAL_WRAP_MODEL_DISTRIBUTED = modeling_utils.wrap_model_distributed
 
+    data_utils.load_train_valid_data = _load_train_valid_data_low_memory
     data_utils.get_train_dataloader = _get_train_dataloader_low_memory
     data_utils.get_val_dataloader = _get_val_dataloader_low_memory
     modeling_utils.wrap_model_distributed = _wrap_model_distributed_low_memory

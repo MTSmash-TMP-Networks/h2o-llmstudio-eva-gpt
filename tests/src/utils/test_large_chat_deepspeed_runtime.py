@@ -179,3 +179,48 @@ def test_rank_partitioned_dataset_is_left_to_existing_parquet_runtime(monkeypatc
     result = runtime._get_train_dataloader_low_memory(train_ds=dataset, cfg=cfg)
 
     assert result is expected
+
+
+def test_same_custom_train_validation_source_uses_automatic_split(monkeypatch):
+    cfg = _cfg()
+    cfg.dataset = SimpleNamespace(
+        validation_strategy="custom",
+        train_dataframe="/data/eva.csv",
+        validation_dataframe="/data/eva.csv",
+    )
+    observed = []
+    expected = (object(), object())
+
+    def original(cfg):
+        observed.append(cfg.dataset.validation_strategy)
+        return expected
+
+    monkeypatch.setattr(runtime, "_ORIGINAL_LOAD_TRAIN_VALID_DATA", original)
+
+    result = runtime._load_train_valid_data_low_memory(cfg)
+
+    assert result is expected
+    assert observed == ["automatic"]
+    assert cfg.dataset.validation_strategy == "custom"
+
+
+def test_different_custom_train_validation_sources_keep_custom_path(monkeypatch):
+    cfg = _cfg()
+    cfg.dataset = SimpleNamespace(
+        validation_strategy="custom",
+        train_dataframe="/data/train.csv",
+        validation_dataframe="/data/validation.csv",
+    )
+    observed = []
+    expected = (object(), object())
+
+    def original(cfg):
+        observed.append(cfg.dataset.validation_strategy)
+        return expected
+
+    monkeypatch.setattr(runtime, "_ORIGINAL_LOAD_TRAIN_VALID_DATA", original)
+
+    result = runtime._load_train_valid_data_low_memory(cfg)
+
+    assert result is expected
+    assert observed == ["custom"]
