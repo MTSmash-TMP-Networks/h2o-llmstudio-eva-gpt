@@ -115,7 +115,10 @@ def _postprocess_batch_predictions_object_strings(self, output: dict) -> dict:
 
     result = _ORIGINAL_POSTPROCESS_BATCH(self, output)
     predicted_text = result.get("predicted_text")
-    if isinstance(predicted_text, np.ndarray) and predicted_text.dtype.kind in {"U", "S"}:
+    if isinstance(predicted_text, np.ndarray) and predicted_text.dtype.kind in {
+        "U",
+        "S",
+    }:
         # Validation concatenates all batches.  Fixed-width unicode would promote
         # every one of hundreds of thousands of rows to the longest generated text.
         result["predicted_text"] = predicted_text.astype(object, copy=False)
@@ -196,7 +199,9 @@ def install_long_run_memory_runtime() -> None:
     _ORIGINAL_RUN_EVAL = train_module.run_eval
     _ORIGINAL_SAVE_CHECKPOINT = train_module.save_checkpoint
 
-    dataset_class.postprocess_batch_predictions = _postprocess_batch_predictions_object_strings
+    dataset_class.postprocess_batch_predictions = (
+        _postprocess_batch_predictions_object_strings
+    )
     train_module.run_eval = _run_eval_with_memory_cleanup
     train_module.save_checkpoint = _save_checkpoint_low_memory
     modeling_utils.save_checkpoint = _save_checkpoint_low_memory
