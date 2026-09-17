@@ -98,6 +98,9 @@ if __name__ == "__main__":
     )
     from llm_studio.src.utils.local_model_utils import ensure_local_eva_model_type
     from llm_studio.src.utils.logging_utils import initialize_logging, write_flag
+    from llm_studio.src.utils.long_run_memory_runtime import (
+        install_long_run_memory_runtime,
+    )
     from llm_studio.src.utils.sharded_parquet_training import (
         install_sharded_parquet_training_support,
     )
@@ -136,6 +139,11 @@ if __name__ == "__main__":
     # Importing train.py installs the existing V100/DeepSpeed precision wrapper.
     # Extend that wrapper afterwards with Transformers low_cpu_mem_usage.
     install_dense_backbone_low_memory()
+
+    # Long jobs repeatedly validate and save checkpoints. Avoid fixed-width
+    # prediction string amplification, skip redundant Causal-LM checkpoint reloads,
+    # and return freed validation/checkpoint memory to the OS after each cycle.
+    install_long_run_memory_runtime()
 
     cfg = load_config_yaml(parser_args.yaml)
 
