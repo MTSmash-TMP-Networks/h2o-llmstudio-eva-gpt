@@ -60,12 +60,11 @@ def _load_train_valid_data_low_memory(cfg: Any):
     if dataset_cfg is None:
         return _ORIGINAL_LOAD_TRAIN_VALID_DATA(cfg)
 
-    if (
-        getattr(dataset_cfg, "validation_strategy", None) == "custom"
-        and _same_dataset_path(
-            getattr(dataset_cfg, "train_dataframe", None),
-            getattr(dataset_cfg, "validation_dataframe", None),
-        )
+    if getattr(
+        dataset_cfg, "validation_strategy", None
+    ) == "custom" and _same_dataset_path(
+        getattr(dataset_cfg, "train_dataframe", None),
+        getattr(dataset_cfg, "validation_dataframe", None),
     ):
         from llm_studio.src.utils.utils import PatchedAttribute
 
@@ -119,8 +118,7 @@ def _is_workerless_in_memory_dataset(dataset: Any, cfg: Any) -> bool:
     already owns loader construction and memory policy.
     """
     return bool(
-        _is_target_deepspeed_chat(cfg)
-        and not _is_rank_partitioned_dataset(dataset)
+        _is_target_deepspeed_chat(cfg) and not _is_rank_partitioned_dataset(dataset)
     )
 
 
