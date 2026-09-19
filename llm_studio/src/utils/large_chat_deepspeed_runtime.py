@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 _PRESERVE_LOADER_MARKER = "_llm_studio_preserve_deepspeed_loader"
 _RANK_PARTITIONED_MARKER = "_llm_studio_rank_partitioned_parquet"
-_LARGE_DATASET_ROWS = 100_000
-_LARGE_PROCESS_RSS_BYTES = 4 * 1024 * 1024 * 1024
 _INSTALLED = False
 _ORIGINAL_GET_TRAIN_DATALOADER: Callable[..., Any] | None = None
 _ORIGINAL_GET_VAL_DATALOADER: Callable[..., Any] | None = None
@@ -109,16 +107,20 @@ def _dataset_length(dataset: Any) -> int:
         return 0
 
 
-def _is_large_in_memory_dataset(dataset: Any, cfg: Any) -> bool:
-    if not _is_target_deepspeed_chat(cfg):
-        return False
-    # The sharded Parquet runtime already owns this case and has stronger rank-local
-    # guarantees. Do not overlap the two policies.
-    if _is_rank_partitioned_dataset(dataset):
-        return False
+def _is_workerless_in_memory_dataset(dataset: Any, cfg: Any) -> bool:
+    """Use workerless loaders for every distributed DeepSpeed causal-LM chat run.
+
+    Forked PyTorch/DeepSpeed DataLoader workers inherit the parent process holding
+    the complete in-memory conversation corpus. Even when the initial RSS or row
+    count looks modest, copy-on-write pages can grow over many hours and Linux may
+    kill one worker without producing a Python/CUDA OOM exception.
+
+    Rank-partitioned Parquet is intentionally excluded because its dedicated runtime
+    already owns loader construction and memory policy.
+    """
     return bool(
-        _dataset_length(dataset) >= _LARGE_DATASET_ROWS
-        or _current_rss_bytes() >= _LARGE_PROCESS_RSS_BYTES
+        _is_target_deepspeed_chat(cfg)
+        and not _is_rank_partitioned_dataset(dataset)
     )
 
 
@@ -165,8 +167,9 @@ def _build_with_zero_workers(
 
     rss_mb = _current_rss_bytes() / (1024 * 1024)
     logger.info(
-        "Rank %s uses num_workers=0 for large in-memory %s data (%s samples; "
-        "host RSS %.1f MB) to avoid forking the complete conversation dataset.",
+        "Rank %s uses num_workers=0 for distributed DeepSpeed causal-LM %s data "
+        "(%s samples; host RSS %.1f MB) so no worker process can duplicate the "
+        "in-memory conversation corpus.",
         _rank(cfg),
         kind,
         _dataset_length(dataset),
@@ -178,7 +181,7 @@ def _build_with_zero_workers(
 def _get_train_dataloader_low_memory(train_ds: Any, cfg: Any):
     if _ORIGINAL_GET_TRAIN_DATALOADER is None:
         raise RuntimeError("Original training DataLoader builder is unavailable.")
-    if not _is_large_in_memory_dataset(train_ds, cfg):
+    if not _is_workerless_in_memory_dataset(train_ds, cfg):
         return _ORIGINAL_GET_TRAIN_DATALOADER(train_ds=train_ds, cfg=cfg)
 
     loader = _build_with_zero_workers(
@@ -193,7 +196,7 @@ def _get_train_dataloader_low_memory(train_ds: Any, cfg: Any):
 def _get_val_dataloader_low_memory(val_ds: Any, cfg: Any):
     if _ORIGINAL_GET_VAL_DATALOADER is None:
         raise RuntimeError("Original validation DataLoader builder is unavailable.")
-    if not _is_large_in_memory_dataset(val_ds, cfg):
+    if not _is_workerless_in_memory_dataset(val_ds, cfg):
         return _ORIGINAL_GET_VAL_DATALOADER(val_ds=val_ds, cfg=cfg)
     return _build_with_zero_workers(
         _ORIGINAL_GET_VAL_DATALOADER,
@@ -204,9 +207,15 @@ def _get_val_dataloader_low_memory(val_ds: Any, cfg: Any):
 
 
 def _should_preserve_loader(train_dataloader: Any, cfg: Any) -> bool:
+    """Preserve every normal in-memory DeepSpeed causal-LM loader.
+
+    Do not depend on the marker alone. If an import-order edge case bypasses the
+    patched builder, falling back to DeepSpeed training_data would silently create
+    a new DeepSpeedDataLoader with worker processes again.
+    """
     return bool(
         _is_target_deepspeed_chat(cfg)
-        and getattr(train_dataloader, _PRESERVE_LOADER_MARKER, False)
+        and not _is_rank_partitioned_dataset(train_dataloader)
     )
 
 
@@ -231,6 +240,40 @@ def _wrap_model_distributed_low_memory(
             cfg=cfg,
         )
 
+    # Defensive fallback: even if the patched DataLoader builders were bypassed by
+    # an import-order edge case, rebuild workerful loaders here before DeepSpeed sees
+    # them. This makes the no-worker policy deterministic instead of heuristic.
+    if int(getattr(train_dataloader, "num_workers", 0) or 0) != 0:
+        logger.warning(
+            "Rank %s received a workerful train DataLoader (%s workers). Rebuilding "
+            "it with num_workers=0 before DeepSpeed initialization.",
+            _rank(cfg),
+            getattr(train_dataloader, "num_workers", 0),
+        )
+        train_dataloader = _build_with_zero_workers(
+            _ORIGINAL_GET_TRAIN_DATALOADER,
+            train_dataloader.dataset,
+            cfg,
+            kind="train",
+        )
+
+    if int(getattr(val_dataloader, "num_workers", 0) or 0) != 0:
+        logger.warning(
+            "Rank %s received a workerful validation DataLoader (%s workers). "
+            "Rebuilding it with num_workers=0 before DeepSpeed initialization.",
+            _rank(cfg),
+            getattr(val_dataloader, "num_workers", 0),
+        )
+        val_dataloader = _build_with_zero_workers(
+            _ORIGINAL_GET_VAL_DATALOADER,
+            val_dataloader.dataset,
+            cfg,
+            kind="validation",
+        )
+
+    if not getattr(train_dataloader, _PRESERVE_LOADER_MARKER, False):
+        train_dataloader = _EpochAwareLoaderProxy(train_dataloader)
+
     from llm_studio.src.utils import modeling_utils
 
     ds_config = modeling_utils.get_ds_config(cfg)
@@ -245,9 +288,9 @@ def _wrap_model_distributed_low_memory(
     model.init_deepspeed()  # type: ignore[attr-defined]
 
     logger.info(
-        "Rank %s preserves the existing distributed train/validation DataLoaders "
-        "through DeepSpeed initialization; no second DeepSpeed DataLoader or worker "
-        "pool is created for the in-memory conversation dataset.",
+        "Rank %s preserves the existing workerless distributed train/validation "
+        "DataLoaders through DeepSpeed initialization; training_data=None prevents "
+        "DeepSpeed from creating a second DataLoader or worker pool.",
         _rank(cfg),
     )
     return model, optimizer, train_dataloader, val_dataloader, lr_scheduler
