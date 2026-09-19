@@ -88,6 +88,7 @@ if __name__ == "__main__":
     )
     from llm_studio.src.utils.gpu_utils import is_oom_error
     from llm_studio.src.utils.large_chat_deepspeed_runtime import (
+        bind_large_chat_runtime_to_train_module,
         install_large_chat_deepspeed_runtime,
     )
     from llm_studio.src.utils.large_text_arrow_memory import (
@@ -135,6 +136,11 @@ if __name__ == "__main__":
         install_dense_backbone_low_memory,
     )
     from llm_studio.train import run
+
+    # Rebind train.py's imported helper aliases explicitly. This closes an import-order
+    # escape hatch where an earlier indirect train.py import could retain the original
+    # DeepSpeedDataLoader path even though data_utils/modeling_utils were patched.
+    bind_large_chat_runtime_to_train_module()
 
     # Importing train.py installs the existing V100/DeepSpeed precision wrapper.
     # Extend that wrapper afterwards with Transformers low_cpu_mem_usage.

@@ -144,10 +144,90 @@ def test_large_chat_deepspeed_keeps_existing_loaders(monkeypatch):
     assert model.deepspeed_initialized is True
 
 
-def test_small_chat_dataset_keeps_original_path(monkeypatch):
-    cfg = _cfg()
+def test_wrap_defensively_rebuilds_workerful_loaders_without_marker(monkeypatch):
+    cfg = _cfg(workers=7)
+    train_dataset = SizedDataset(128)
+    val_dataset = SizedDataset(64)
+    train_loader = Loader(train_dataset, workers=7)
+    val_loader = Loader(val_dataset, workers=7)
+    optimizer = object()
+    scheduler = object()
+    model = SimpleNamespace(backbone=object(), deepspeed_initialized=False)
+
+    def init_deepspeed():
+        model.deepspeed_initialized = True
+
+    model.init_deepspeed = init_deepspeed
+    built = []
+
+    def original_train(*, train_ds, cfg):
+        built.append(("train", cfg.environment.number_of_workers))
+        return Loader(train_ds, workers=cfg.environment.number_of_workers)
+
+    def original_val(*, val_ds, cfg):
+        built.append(("validation", cfg.environment.number_of_workers))
+        return Loader(val_ds, workers=cfg.environment.number_of_workers)
+
+    captured = {}
+
+    def fake_initialize(**kwargs):
+        captured.update(kwargs)
+        return "engine", "wrapped-optimizer", None, "wrapped-scheduler"
+
+    from llm_studio.src.utils import modeling_utils
+
+    monkeypatch.setattr(runtime, "_ORIGINAL_GET_TRAIN_DATALOADER", original_train)
+    monkeypatch.setattr(runtime, "_ORIGINAL_GET_VAL_DATALOADER", original_val)
+    monkeypatch.setattr(modeling_utils, "get_ds_config", lambda cfg: {"zero": 2})
+    monkeypatch.setattr(runtime.deepspeed, "initialize", fake_initialize)
+    monkeypatch.setattr(
+        runtime,
+        "_ORIGINAL_WRAP_MODEL_DISTRIBUTED",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("fallback called")),
+    )
+
+    result = runtime._wrap_model_distributed_low_memory(
+        model=model,
+        optimizer=optimizer,
+        lr_scheduler=scheduler,
+        train_dataloader=train_loader,
+        val_dataloader=val_loader,
+        cfg=cfg,
+    )
+
+    assert built == [("train", 0), ("validation", 0)]
+    assert result[2].num_workers == 0
+    assert result[3].num_workers == 0
+    assert getattr(result[2], runtime._PRESERVE_LOADER_MARKER) is True
+    assert captured["training_data"] is None
+    assert cfg.environment.number_of_workers == 7
+
+
+def test_small_deepspeed_chat_dataset_is_also_workerless(monkeypatch):
+    cfg = _cfg(workers=8)
     dataset = SizedDataset(128)
-    expected = Loader(dataset, workers=8)
+    observed = {}
+
+    def original(*, train_ds, cfg):
+        observed["workers"] = cfg.environment.number_of_workers
+        return Loader(train_ds, workers=observed["workers"])
+
+    monkeypatch.setattr(runtime, "_ORIGINAL_GET_TRAIN_DATALOADER", original)
+    monkeypatch.setattr(runtime, "_current_rss_bytes", lambda: 128 * 1024**2)
+
+    result = runtime._get_train_dataloader_low_memory(train_ds=dataset, cfg=cfg)
+
+    assert observed["workers"] == 0
+    assert result.num_workers == 0
+    assert getattr(result, runtime._PRESERVE_LOADER_MARKER) is True
+    assert cfg.environment.number_of_workers == 8
+
+
+def test_non_deepspeed_chat_keeps_original_worker_setting(monkeypatch):
+    cfg = _cfg(workers=5)
+    cfg.environment.use_deepspeed = False
+    dataset = SizedDataset(128)
+    expected = Loader(dataset, workers=5)
     calls = []
 
     def original(*, train_ds, cfg):
@@ -155,12 +235,11 @@ def test_small_chat_dataset_keeps_original_path(monkeypatch):
         return expected
 
     monkeypatch.setattr(runtime, "_ORIGINAL_GET_TRAIN_DATALOADER", original)
-    monkeypatch.setattr(runtime, "_current_rss_bytes", lambda: 128 * 1024**2)
 
     result = runtime._get_train_dataloader_low_memory(train_ds=dataset, cfg=cfg)
 
     assert result is expected
-    assert calls == [(dataset, 8)]
+    assert calls == [(dataset, 5)]
 
 
 def test_rank_partitioned_dataset_is_left_to_existing_parquet_runtime(monkeypatch):
