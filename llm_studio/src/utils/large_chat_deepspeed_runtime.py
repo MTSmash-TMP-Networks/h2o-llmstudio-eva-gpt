@@ -294,6 +294,19 @@ def _wrap_model_distributed_low_memory(
     return model, optimizer, train_dataloader, val_dataloader, lr_scheduler
 
 
+def bind_large_chat_runtime_to_train_module() -> None:
+    """Rebind train.py aliases after import so import order cannot bypass safeguards."""
+    import llm_studio.train as train_module
+
+    train_module.get_train_dataloader = _get_train_dataloader_low_memory
+    train_module.get_val_dataloader = _get_val_dataloader_low_memory
+    train_module.wrap_model_distributed = _wrap_model_distributed_low_memory
+    logger.info(
+        "Bound workerless DeepSpeed causal-LM DataLoader safeguards directly to "
+        "llm_studio.train."
+    )
+
+
 def install_large_chat_deepspeed_runtime() -> None:
     """Install the large in-memory chat safeguards before train.py imports helpers."""
     global _INSTALLED
