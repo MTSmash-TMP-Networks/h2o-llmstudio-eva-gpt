@@ -443,6 +443,7 @@ def wrap_model_distributed(
 
     return model, optimizer, train_dataloader, val_dataloader, lr_scheduler
 
+
 def get_optimizer(
     model: torch.nn.Module, cfg: DefaultConfigProblemBase
 ) -> torch.optim.Optimizer:
