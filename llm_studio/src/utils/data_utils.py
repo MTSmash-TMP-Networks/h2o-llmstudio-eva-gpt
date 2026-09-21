@@ -413,6 +413,28 @@ def get_train_dataset(train_df: pd.DataFrame, cfg: DefaultConfigProblemBase) -> 
     return train_dataset
 
 
+def _effective_dataloader_workers(cfg: DefaultConfigProblemBase) -> int:
+    """Return a safe worker count for the active runtime."""
+    environment = getattr(cfg, "environment", None)
+    if environment is None:
+        return 0
+
+    configured_workers = int(getattr(environment, "number_of_workers", 0) or 0)
+    if (
+        getattr(environment, "use_deepspeed", False)
+        and getattr(environment, "_distributed", False)
+        and getattr(cfg, "problem_type", "") == "text_causal_language_modeling"
+    ):
+        if configured_workers != 0:
+            logger.info(
+                "Rank %s forces num_workers=0 for distributed DeepSpeed causal-LM "
+                "DataLoaders to prevent worker processes from duplicating the "
+                "in-memory training corpus.",
+                getattr(environment, "_local_rank", 0),
+            )
+        return 0
+    return configured_workers
+
 def get_train_dataloader(train_ds: Any, cfg: DefaultConfigProblemBase) -> DataLoader:
     """Prepares train DataLoader.
 
@@ -454,7 +476,7 @@ def get_train_dataloader(train_ds: Any, cfg: DefaultConfigProblemBase) -> DataLo
         sampler=sampler,
         shuffle=(sampler is None),
         batch_size=cfg.training.batch_size,
-        num_workers=cfg.environment.number_of_workers,
+        num_workers=_effective_dataloader_workers(cfg),
         pin_memory=True,
         collate_fn=train_ds.get_train_collate_fn(),
         drop_last=cfg.training.drop_last_batch,
@@ -510,7 +532,7 @@ def get_val_dataloader(val_ds: Any, cfg: DefaultConfigProblemBase):
         val_ds,
         sampler=sampler,
         batch_size=batch_size,
-        num_workers=cfg.environment.number_of_workers,
+        num_workers=_effective_dataloader_workers(cfg),
         pin_memory=True,
         collate_fn=val_ds.get_validation_collate_fn(),
         worker_init_fn=worker_init_fn,
