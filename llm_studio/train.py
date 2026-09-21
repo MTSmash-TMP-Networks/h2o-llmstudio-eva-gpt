@@ -21,9 +21,9 @@ from typing import Any
 
 import deepspeed
 import numpy as np
-from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 import pandas as pd
 import torch
+from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
