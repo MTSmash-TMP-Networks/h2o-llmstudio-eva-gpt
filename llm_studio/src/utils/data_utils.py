@@ -435,6 +435,7 @@ def _effective_dataloader_workers(cfg: DefaultConfigProblemBase) -> int:
         return 0
     return configured_workers
 
+
 def get_train_dataloader(train_ds: Any, cfg: DefaultConfigProblemBase) -> DataLoader:
     """Prepares train DataLoader.
 
