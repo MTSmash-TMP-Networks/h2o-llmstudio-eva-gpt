@@ -365,37 +365,72 @@ def wrap_model_distributed(
 ):
     if cfg.environment.use_deepspeed:
         ds_config = get_ds_config(cfg)
+
+        # Causal-LM training already has correctly distributed PyTorch DataLoaders.
+        # Passing training_data makes DeepSpeed silently construct another
+        # DeepSpeedDataLoader and worker pool. On large in-memory chat datasets those
+        # workers inherit many gigabytes of Python objects and can be killed by the
+        # Linux OOM killer hours into a run. Keep the existing H2O loaders instead.
+        keep_native_loaders = (
+            getattr(cfg, "problem_type", "") == "text_causal_language_modeling"
+        )
+
         if not cfg.training.lora:
-            ds_engine, optimizer, train_dataloader, lr_scheduler = deepspeed.initialize(
+            (
+                ds_engine,
+                optimizer,
+                ds_train_dataloader,
+                lr_scheduler,
+            ) = deepspeed.initialize(
                 model=model.backbone,
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
-                training_data=train_dataloader.dataset,
+                training_data=None if keep_native_loaders else train_dataloader.dataset,
                 config_params=ds_config,
             )
             model.backbone = ds_engine
         else:
-            ds_engine, optimizer, train_dataloader, lr_scheduler = deepspeed.initialize(
+            (
+                ds_engine,
+                optimizer,
+                ds_train_dataloader,
+                lr_scheduler,
+            ) = deepspeed.initialize(
                 model=model.backbone.base_model.model,  # type: ignore
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
-                training_data=train_dataloader.dataset,
+                training_data=None if keep_native_loaders else train_dataloader.dataset,
                 config_params=ds_config,
             )
             model.backbone.base_model.model = ds_engine  # type: ignore
+
         model.init_deepspeed()  # type: ignore
-        val_dataloader = DeepSpeedDataLoader(
-            val_dataloader.dataset,
-            batch_size=val_dataloader.batch_size,
-            local_rank=cfg.environment._local_rank,
-            pin_memory=True,
-            tput_timer=None,
-            data_sampler=OrderedDistributedSampler(
+
+        if keep_native_loaders:
+            if ds_train_dataloader is not None:
+                raise RuntimeError(
+                    "DeepSpeed unexpectedly returned a DataLoader although causal-LM "
+                    "initialization used training_data=None."
+                )
+            logger.info(
+                "DeepSpeed causal-LM keeps the existing PyTorch train/validation "
+                "DataLoaders; training_data=None prevents DeepSpeedDataLoader worker "
+                "processes."
+            )
+        else:
+            train_dataloader = ds_train_dataloader
+            val_dataloader = DeepSpeedDataLoader(
                 val_dataloader.dataset,
-                num_replicas=cfg.environment._world_size,
-                rank=cfg.environment._local_rank,
-            ),
-        )
+                batch_size=val_dataloader.batch_size,
+                local_rank=cfg.environment._local_rank,
+                pin_memory=True,
+                tput_timer=None,
+                data_sampler=OrderedDistributedSampler(
+                    val_dataloader.dataset,
+                    num_replicas=cfg.environment._world_size,
+                    rank=cfg.environment._local_rank,
+                ),
+            )
     else:
         find_unused_parameters = cfg.environment.find_unused_parameters
         if getattr(cfg.architecture, "gradient_checkpointing", None):

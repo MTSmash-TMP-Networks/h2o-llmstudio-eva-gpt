@@ -23,6 +23,7 @@ import deepspeed
 import numpy as np
 import pandas as pd
 import torch
+from deepspeed.runtime.dataloader import DeepSpeedDataLoader
 from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -97,6 +98,47 @@ def count_optimizer_update_steps_per_epoch(
     return sum(
         is_optimizer_update_step(itr, epoch_steps, grad_accumulation)
         for itr in range(epoch_steps)
+    )
+
+
+def _assert_safe_causal_lm_deepspeed_loaders(
+    cfg: DefaultConfigProblemBase, train_dataloader: Any, val_dataloader: Any
+) -> None:
+    """Fail immediately if DeepSpeed reintroduces worker-backed loaders."""
+    environment = getattr(cfg, "environment", None)
+    if not (
+        environment is not None
+        and getattr(environment, "use_deepspeed", False)
+        and getattr(environment, "_distributed", False)
+        and getattr(cfg, "problem_type", "") == "text_causal_language_modeling"
+    ):
+        return
+
+    loader_details = []
+    for name, loader in (
+        ("train", train_dataloader),
+        ("validation", val_dataloader),
+    ):
+        loader_type = f"{loader.__class__.__module__}.{loader.__class__.__name__}"
+        workers = int(getattr(loader, "num_workers", 0) or 0)
+        loader_details.append(f"{name}={loader_type}, num_workers={workers}")
+
+        if isinstance(loader, DeepSpeedDataLoader):
+            raise LLMTrainingException(
+                f"Unsafe {name} DeepSpeedDataLoader detected before training. "
+                "Causal-LM DeepSpeed must keep the existing PyTorch DataLoader "
+                "with training_data=None."
+            )
+        if workers != 0:
+            raise LLMTrainingException(
+                f"Unsafe {name} DataLoader has num_workers={workers}. Distributed "
+                "DeepSpeed causal-LM requires num_workers=0 to avoid delayed Linux "
+                "OOM kills of worker processes."
+            )
+
+    logger.info(
+        "Verified workerless DeepSpeed causal-LM DataLoaders before training: %s",
+        "; ".join(loader_details),
     )
 
 
@@ -714,6 +756,12 @@ def run(cfg: DefaultConfigProblemBase) -> float:
             train_dataloader=train_dataloader,
             val_dataloader=val_dataloader,
             cfg=cfg,
+        )
+
+        _assert_safe_causal_lm_deepspeed_loaders(
+            cfg=cfg,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
         )
 
     if cfg.environment.compile_model:
