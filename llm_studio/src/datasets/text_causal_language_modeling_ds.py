@@ -663,9 +663,13 @@ class CustomDataset(Dataset):
         prompt_label_masks = [encoding[3] for encoding in encodings]
         # concatenate system encoding with root prompt encoding
         prompt_encodings[0] = torch.cat([system_encoding, prompt_encodings[0]])
+        # System instructions are input context, never an assistant target when
+        # prompt-label masking is enabled. Keeping them visible in input_ids lets
+        # the answer condition on the system prompt without teaching the model to
+        # reproduce the instruction text itself.
         prompt_label_masks[0] = torch.cat(
             [
-                torch.zeros_like(system_encoding, dtype=torch.bool),
+                torch.ones_like(system_encoding, dtype=torch.bool),
                 prompt_label_masks[0],
             ]
         )

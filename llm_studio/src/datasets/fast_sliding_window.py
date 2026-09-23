@@ -414,9 +414,10 @@ class FastSlidingWindowDataset(base_ds.CustomDataset):
                         system_length = token_lengths.get(
                             (local_idx, turn_idx, "system", 0), 0
                         )
-                        system_trainable = not mask_prompt_labels or (
-                            eligible_turn and mask_user_only
-                        )
+                        # System instructions remain visible context but are
+                        # never supervised prompt targets. This mirrors the serial
+                        # label construction in text_causal_language_modeling_ds.
+                        system_trainable = not mask_prompt_labels
                         position = self._append_segment(
                             position,
                             system_length,

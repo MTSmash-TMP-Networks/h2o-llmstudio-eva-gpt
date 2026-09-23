@@ -146,3 +146,69 @@ def test_plain_text_rows_are_ignored_when_toggle_is_disabled(mock_get_tokenizer)
     tokens = sample["input_ids"][sample["attention_mask"].bool()]
 
     assert dataset.tokenizer.decode(tokens) == "<|prompt|><|answer|>"
+
+
+@patch("llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer")
+def test_evagpt_roles_supervise_only_assistant_content(mock_get_tokenizer):
+    """System/user/context stay input context while the assistant remains the target."""
+    mock_get_tokenizer.return_value = OrdinalCharacterTokenizer()
+    df = pd.DataFrame(
+        {
+            "id": ["root"],
+            "Benutzer": ["Hallo"],
+            "Assistentin": ["Hi"],
+            "parent_id": [None],
+            "system": ["Policy"],
+            "Kontext": ["Fakt"],
+            "Text": [""],
+        }
+    )
+    cfg = ConfigProblemBase(
+        llm_backbone="unit-test",
+        dataset=ConfigNLPCausalLMDataset(
+            prompt_column=("Benutzer", "Kontext"),
+            prompt_column_separator="\\n",
+            answer_column="Assistentin",
+            parent_id_column="parent_id",
+            id_column="id",
+            system_column="system",
+            text_system_start="<|system|>",
+            text_prompt_start="<|prompt|>",
+            text_answer_separator="<|answer|>",
+            add_eos_token_to_system=False,
+            add_eos_token_to_prompt=False,
+            add_eos_token_to_answer=False,
+            mask_prompt_labels=True,
+            mask_prompt_user_text_only=True,
+        ),
+        tokenizer=ConfigNLPCausalLMTokenizer(max_length=128),
+    )
+
+    dataset = CustomDataset(df, cfg)
+    input_ids, labels, _, _ = dataset._get_input_ids_labels_and_encodings(0)
+    text = dataset.tokenizer.decode(input_ids)
+
+    system_text = "<|system|>Policy"
+    prompt_prefix = "<|prompt|>"
+    natural_prompt = "Hallo" + chr(10) + "Fakt"
+    answer_part = "<|answer|>Hi"
+    assert text == system_text + prompt_prefix + natural_prompt + answer_part
+
+    position = 0
+    assert labels[position : position + len(system_text)].tolist() == [-100] * len(
+        system_text
+    )
+    position += len(system_text)
+
+    assert torch.equal(
+        labels[position : position + len(prompt_prefix)],
+        input_ids[position : position + len(prompt_prefix)],
+    )
+    position += len(prompt_prefix)
+
+    assert labels[position : position + len(natural_prompt)].tolist() == [-100] * len(
+        natural_prompt
+    )
+    position += len(natural_prompt)
+
+    assert torch.equal(labels[position:], input_ids[position:])

@@ -301,7 +301,12 @@ def get_data(cfg: DefaultConfigProblemBase) -> tuple[pd.DataFrame, pd.DataFrame]
             val_df = sample_data(cfg, val_df)
 
     if cfg.training.train_validation_data:
-        train_df = pd.concat([train_df, val_df], axis=0)
+        logger.warning(
+            "Train Validation Data=True adds the validation split back into training. "
+            "The model will train on those rows, so validation metrics are not a "
+            "strict held-out generalization estimate."
+        )
+        train_df = pd.concat([train_df, val_df], axis=0, ignore_index=True)
 
     train_df = cfg.dataset.dataset_class.preprocess_dataframe(train_df, cfg)
     val_df = cfg.dataset.dataset_class.preprocess_dataframe(val_df, cfg)
@@ -317,7 +322,30 @@ def merge_on_common_items(lst):
     return [list(c) for c in nx.connected_components(G)]
 
 
+def _same_dataset_file(left: Any, right: Any) -> bool:
+    """Return whether train and validation resolve to the same local source."""
+    if left in (None, "", "None") or right in (None, "", "None"):
+        return False
+    try:
+        return os.path.abspath(os.fspath(left)) == os.path.abspath(os.fspath(right))
+    except TypeError:
+        return False
+
+
 def load_train_valid_data(cfg) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if cfg.dataset.validation_strategy == "custom" and _same_dataset_file(
+        cfg.dataset.train_dataframe,
+        cfg.dataset.validation_dataframe,
+    ):
+        logger.warning(
+            "Train and custom validation point to the same dataset. Using one "
+            "conversation-aware automatic split instead of loading the same source "
+            "twice. This prevents duplicate training rows and keeps whole parent "
+            "chains in only one split."
+        )
+        with PatchedAttribute(cfg.dataset, "validation_strategy", "automatic"):
+            return load_train_valid_data(cfg)
+
     if cfg.dataset.validation_strategy == "custom":
         if cfg.dataset.validation_dataframe == "None":
             raise LLMDataException(
