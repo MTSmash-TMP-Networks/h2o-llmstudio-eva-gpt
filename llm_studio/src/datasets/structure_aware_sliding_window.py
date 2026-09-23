@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # the remaining duplicated prefix for system/current-prompt context.
 _ANCHOR_MAX_TOKENS = 256
 _MIN_LOCAL_OVERLAP_TOKENS = 64
-_CACHE_STRATEGY_VERSION = "structure-aware-v1"
+_CACHE_STRATEGY_VERSION = "structure-aware-v2-system-context-mask"
 
 
 class StructureAwareSlidingWindowDataset(FastSlidingWindowDataset):
