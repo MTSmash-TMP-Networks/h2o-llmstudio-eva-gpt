@@ -218,3 +218,40 @@ def test_cache_key_changes_with_label_masking(tmp_path, monkeypatch):
         CustomDataset(df, second_cfg, mode="train")
 
     assert len(list((tmp_path / "sample_indices").glob("*.npy"))) == 2
+
+
+def test_system_context_mask_matches_batched_sliding_layout():
+    tokenizer = BatchCharacterTokenizer()
+    df = pd.DataFrame(
+        {
+            "prompt": ["user"],
+            "answer": ["answer"],
+            "system": ["system policy"],
+        }
+    )
+    cfg = make_cfg(max_length=64, only_last_answer=False)
+    cfg.dataset.system_column = "system"
+    cfg.dataset.text_system_start = "System:"
+    cfg.dataset.text_prompt_start = "Prompt:"
+    cfg.dataset.text_answer_separator = "Answer:"
+    cfg.dataset.add_eos_token_to_system = False
+    cfg.dataset.add_eos_token_to_prompt = False
+    cfg.dataset.add_eos_token_to_answer = False
+
+    with patch(
+        "llm_studio.src.datasets.text_causal_language_modeling_ds.get_tokenizer",
+        return_value=tokenizer,
+    ):
+        dataset = CustomDataset(df, cfg, mode="train")
+
+    layouts = dataset._compute_sample_layouts_batched()
+    input_ids, labels, _, _ = dataset._get_input_ids_labels_and_encodings(
+        0,
+        augment=False,
+        trim_to_max_length=False,
+    )
+
+    system_length = len("System:system policy")
+    assert torch.all(labels[:system_length] == -100)
+    assert layouts[0].length == len(input_ids)
+    assert layouts[0].trainable_spans == label_spans(labels)
