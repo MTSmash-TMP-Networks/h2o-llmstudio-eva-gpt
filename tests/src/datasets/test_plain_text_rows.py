@@ -190,7 +190,7 @@ def test_evagpt_roles_supervise_only_assistant_content(mock_get_tokenizer):
 
     system_text = "<|system|>Policy"
     prompt_prefix = "<|prompt|>"
-    natural_prompt = "Hallo\\nFakt"
+    natural_prompt = "Hallo" + chr(10) + "Fakt"
     answer_part = "<|answer|>Hi"
     assert text == system_text + prompt_prefix + natural_prompt + answer_part
 
