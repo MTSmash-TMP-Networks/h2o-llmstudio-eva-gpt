@@ -74,6 +74,23 @@ def test_get_data_custom_validation_strategy(
     assert len(train_df), len(val_df) == 100
 
 
+def test_same_custom_source_is_split_once_without_duplicate_loading(
+    cfg_mock, read_dataframe_drop_missing_labels_mock
+):
+    cfg_mock.dataset.validation_strategy = "custom"
+    cfg_mock.dataset.train_dataframe = "/same/data.csv"
+    cfg_mock.dataset.validation_dataframe = "/same/data.csv"
+    cfg_mock.dataset.parent_id_column = "None"
+
+    train_df, val_df = load_train_valid_data(cfg_mock)
+
+    train_ids = set(train_df["id"])
+    val_ids = set(val_df["id"])
+    assert read_dataframe_drop_missing_labels_mock.call_count == 1
+    assert train_ids.isdisjoint(val_ids)
+    assert len(train_ids) + len(val_ids) == 100
+
+
 def test_get_data_automatic_split(
     cfg_mock, read_dataframe_drop_missing_labels_mock, conversation_chain_ids_mock
 ):
